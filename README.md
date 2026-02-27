@@ -1,117 +1,119 @@
-# 📚 书签管理器 Chrome 扩展
+# 📚 Bookmark Manager Chrome Extension
 
-一个简洁、高效、美观的 Chrome 书签管理工具，以全屏新标签页的形式展示，让您的书签井井有条。
+English | [简体中文](README_zh-CN.md)
 
-## ✨ 功能特性
+A clean, efficient, and beautiful Chrome bookmark management tool displayed as a full-screen new tab page, keeping your bookmarks organized.
 
-- 🎯 **新标签页替换** - 每次打开新标签页即可看到美观的书签管理界面
-- 🔍 **实时搜索** - 快速搜索书签标题和 URL
-- 📁 **文件夹管理** - 完整支持 Chrome 原生书签文件夹结构
-- ✏️ **书签编辑** - 添加、编辑、删除书签和文件夹
-- 🌍 **双语界面** - 支持中文和英文界面切换
-- 🎨 **优雅界面** - 现代化的渐变设计和流畅动画
-- 🖼️ **网站图标** - 自动获取和缓存网站 favicon
-- 🕐 **智能问候** - 根据时间段显示不同的问候语
-- 🐛 **调试模式** - 内置开发者选项和日志系统
+## ✨ Features
 
-## 🚀 安装方法
+- 🎯 **New Tab Override** - Beautiful bookmark manager interface on every new tab
+- 🔍 **Real-time Search** - Quickly search bookmarks by title and URL
+- 📁 **Folder Management** - Full support for Chrome native bookmark folder structure
+- ✏️ **Bookmark Editing** - Add, edit, and delete bookmarks and folders
+- 🌍 **Bilingual Interface** - Switch between Chinese and English
+- 🎨 **Elegant UI** - Modern gradient design with smooth animations
+- 🖼️ **Website Icons** - Automatic favicon fetching and caching
+- 🕐 **Smart Greetings** - Time-based greeting messages
+- 🐛 **Debug Mode** - Built-in developer options and logging system
 
-### 开发者模式安装
+## 🚀 Installation
 
-1. **加载扩展**
-   - 打开 Chrome 浏览器，访问 `chrome://extensions/`
-   - 启用右上角的"开发者模式"
-   - 点击"加载已解压的扩展程序"
-   - 选择本项目文件夹
-   - 完成！
+### Developer Mode Installation
 
-2. **开始使用**
-   - 打开新标签页（`Cmd+T` / `Ctrl+T`）
-   - 即可看到书签管理界面
+1. **Load Extension**
+   - Open Chrome and visit `chrome://extensions/`
+   - Enable "Developer mode" in the top right corner
+   - Click "Load unpacked"
+   - Select the project folder
+   - Done!
 
-## 📖 使用指南
+2. **Start Using**
+   - Open a new tab (`Cmd+T` / `Ctrl+T`)
+   - Your bookmark manager interface will appear
 
-### 基本操作
+## 📖 User Guide
 
-**浏览书签**
-- 左侧显示文件夹列表，包括"书签栏"、"其他书签"等
-- 点击文件夹查看其中的书签
-- 书签以卡片形式展示，显示网站图标、标题和域名
+### Basic Operations
 
-**搜索书签**
-- 在顶部搜索框输入关键词
-- 实时过滤显示匹配的书签
+**Browse Bookmarks**
+- Folder list displayed on the left, including "Bookmarks Bar", "Other Bookmarks", etc.
+- Click a folder to view its bookmarks
+- Bookmarks displayed as cards showing website icon, title, and domain
 
-**添加书签**
-- 点击"添加书签"按钮
-- 填写标题、网址，选择目标文件夹
-- 点击"保存"
+**Search Bookmarks**
+- Enter keywords in the top search box
+- Real-time filtering of matching bookmarks
 
-**创建文件夹**
-- 点击"新建文件夹"按钮
-- 输入文件夹名称
-- 新文件夹将创建在当前选中的文件夹下
+**Add Bookmarks**
+- Click "Add Bookmark" button
+- Fill in title, URL, and select target folder
+- Click "Save"
 
-**编辑和删除**
-- 进入"编辑模式"显示所有操作按钮
-- 或直接悬停在书签卡片上显示操作按钮
-- 点击编辑按钮修改书签信息
-- 点击删除按钮移除书签
+**Create Folders**
+- Click "New Folder" button
+- Enter folder name
+- New folder will be created under the currently selected folder
 
-**切换语言**
-- 点击右上角的语言切换按钮（🌍）
-- 或在设置中选择语言
+**Edit and Delete**
+- Enter "Edit Mode" to display all action buttons
+- Or hover over bookmark cards to show action buttons
+- Click edit button to modify bookmark information
+- Click delete button to remove bookmarks
 
-**设置选项**
-- 点击"设置"按钮打开设置面板
-- 可切换界面语言
-- 可开启调试模式查看详细日志
-- 可清空 favicon 缓存
+**Switch Language**
+- Click the language toggle button (🌍) in the top right corner
+- Or select language in Settings
 
-## 🛠️ 技术栈
+**Settings Options**
+- Click "Settings" button to open settings panel
+- Switch interface language
+- Enable debug mode to view detailed logs
+- Clear favicon cache
 
-- **Manifest V3** - Chrome 扩展最新标准
-- **原生 JavaScript** - 无框架依赖，轻量高效
-- **现代 CSS** - Flexbox 布局、CSS 变量、动画效果
-- **Chrome Bookmarks API** - 管理书签数据
-- **Chrome Storage API** - 本地数据存储
-- **国际化支持** - 完整的双语系统
+## 🛠️ Tech Stack
 
-## 📁 项目结构
+- **Manifest V3** - Latest Chrome extension standard
+- **Vanilla JavaScript** - No framework dependencies, lightweight and efficient
+- **Modern CSS** - Flexbox layout, CSS variables, animations
+- **Chrome Bookmarks API** - Manage bookmark data
+- **Chrome Storage API** - Local data storage
+- **Internationalization** - Complete bilingual system
+
+## 📁 Project Structure
 
 ```
 bookmark-manager/
-├── manifest.json          # 扩展配置文件
-├── newtab.html           # 新标签页 HTML
-├── newtab.css            # 样式文件
-├── newtab.js             # 主要功能脚本
-├── background.js         # 后台服务（favicon缓存）
-├── default-favicon.svg   # 默认图标
-├── package.json          # Node.js 配置
-├── generate-icons.js     # 图标生成脚本
-├── icons/                # 扩展图标
-└── README.md             # 说明文档
+├── manifest.json          # Extension configuration
+├── newtab.html           # New tab HTML
+├── newtab.css            # Stylesheet
+├── newtab.js             # Main functionality script
+├── background.js         # Background service (favicon cache)
+├── default-favicon.svg   # Default icon
+├── package.json          # Node.js configuration
+├── generate-icons.js     # Icon generation script
+├── icons/                # Extension icons
+└── README.md             # Documentation
 ```
 
-## 🔧 开发说明
+## 🔧 Development
 
-### 修改代码后刷新扩展
+### Refresh Extension After Code Changes
 
-1. 在 `chrome://extensions/` 页面找到本扩展
-2. 点击刷新图标
-3. 打开新标签页查看效果
-4. 按 `F12` 打开开发者工具调试
+1. Find the extension on `chrome://extensions/` page
+2. Click the refresh icon
+3. Open a new tab to see the changes
+4. Press `F12` to open DevTools for debugging
 
-### 自定义样式
+### Customize Styles
 
-编辑 `newtab.css` 可自定义界面：
-- CSS 变量定义在 `:root` 中
-- 修改渐变色、字体、间距等
-- 调整卡片布局和尺寸
+Edit `newtab.css` to customize the interface:
+- CSS variables defined in `:root`
+- Modify gradients, fonts, spacing, etc.
+- Adjust card layout and sizes
 
-### 添加新翻译
+### Add New Translations
 
-在 `newtab.js` 的 `i18n` 对象中添加新的翻译键值对：
+Add new key-value pairs in the `i18n` object in `newtab.js`:
 ```javascript
 const i18n = {
   'zh-CN': { key: '中文文本' },
@@ -119,30 +121,30 @@ const i18n = {
 };
 ```
 
-## 📝 版本信息
+## 📝 Version Information
 
-**当前版本:** 1.0.0  
-**发布日期:** 2026-02-27
+**Current Version:** 1.0.0  
+**Release Date:** 2026-02-27
 
-### 版本特性
+### Version Features
 
-- ✅ 完整的书签管理功能
-- ✅ 双语界面支持（中文/English）
-- ✅ 网站图标自动获取和缓存
-- ✅ 搜索和过滤功能
-- ✅ 文件夹层级浏览
-- ✅ 编辑模式
-- ✅ 调试和日志系统
-- ✅ 响应式布局
+- ✅ Complete bookmark management functionality
+- ✅ Bilingual interface support (中文/English)
+- ✅ Automatic website icon fetching and caching
+- ✅ Search and filtering functionality
+- ✅ Folder hierarchy browsing
+- ✅ Edit mode
+- ✅ Debug and logging system
+- ✅ Responsive layout
 
-## 📄 许可证
+## 📄 License
 
 MIT License
 
-## 🤝 贡献
+## 🤝 Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Feel free to submit Issues and Pull Requests!
 
 ---
 
-**享受高效的书签管理体验！** 📚✨
+**Enjoy efficient bookmark management!** 📚✨
