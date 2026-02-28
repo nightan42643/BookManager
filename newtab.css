@@ -196,20 +196,38 @@ body {
 /* 侧边栏 */
 .sidebar {
   width: 280px;
+  min-width: 280px;
+  max-width: 600px;
   background: var(--card-bg);
   border-right: 1px solid var(--border-color);
   padding: 24px;
   overflow-y: auto;
   flex-shrink: 0;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  background: transparent;
+  transition: background-color 0.2s;
+  z-index: 10;
+}
+
+.sidebar-resize-handle:hover {
+  background: linear-gradient(to right, transparent, rgba(102, 126, 234, 0.3));
+}
+
+.sidebar-resize-handle.resizing {
+  background: linear-gradient(to right, transparent, rgba(102, 126, 234, 0.5));
 }
 
 .sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding-bottom: 12px;
-  border-bottom: 2px solid var(--border-color);
+  display: none;
 }
 
 .sidebar-header h2 {
@@ -232,32 +250,98 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding-top: 8px;
 }
 
 .group-section-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 16px;
-  margin-bottom: 8px;
-  padding: 0 16px;
-}
-
-.group-section-title:first-child {
-  margin-top: 0;
+  display: none;
 }
 
 .group-item {
   display: flex;
   align-items: center;
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.2s;
   border: 2px solid transparent;
   position: relative;
+}
+
+/* 根据层级添加左侧缩进 */
+.group-item[data-level="1"] {
+  padding-left: 20px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.group-item[data-level="2"] {
+  padding-left: 28px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.group-item[data-level="3"] {
+  padding-left: 36px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+/* 子文件夹样式微调 */
+.group-item[data-level="1"] .group-icon,
+.group-item[data-level="2"] .group-icon,
+.group-item[data-level="3"] .group-icon {
+  font-size: 20px;
+  opacity: 0.95;
+}
+
+.group-item[data-level="1"] .group-name,
+.group-item[data-level="2"] .group-name,
+.group-item[data-level="3"] .group-name {
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-item[data-level="1"] .group-count,
+.group-item[data-level="2"] .group-count,
+.group-item[data-level="3"] .group-count {
+  font-size: 13px;
+}
+
+/* 展开/折叠图标 */
+.folder-expand-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.folder-expand-icon:hover {
+  color: var(--primary-color);
+  background: var(--hover-bg);
+}
+
+.folder-expand-icon.empty {
+  opacity: 0;
+  pointer-events: none;
+  cursor: default;
+}
+
+/* 展开图标在 draggable 状态下仍保持 pointer cursor */
+.group-item[draggable="true"] .folder-expand-icon:not(.empty) {
+  cursor: pointer;
 }
 
 .group-item:hover {
@@ -269,8 +353,33 @@ body {
   border-color: var(--primary-color);
 }
 
+/* 展开状态下的顶级文件夹保持高亮 */
+.group-item.has-expanded-children {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.08) 0%, rgba(118, 75, 162, 0.08) 100%);
+  border-color: rgba(102, 126, 234, 0.3);
+}
+
+/* 子文件夹容器 - 整个区域统一背景色 */
+.subfolder-container {
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: var(--radius-md);
+  padding: 4px 0;
+  margin: 4px 0 4px 8px;
+}
+
+/* 子文件夹悬停效果 */
+.subfolder-container .group-item:hover {
+  background: rgba(102, 126, 234, 0.05);
+}
+
+/* 子文件夹选中状态 */
+.subfolder-container .group-item.active {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.12) 100%);
+  border-color: var(--primary-color);
+}
+
 .group-icon {
-  font-size: 20px;
+  font-size: 22px;
   margin-right: 12px;
 }
 
@@ -280,7 +389,7 @@ body {
 }
 
 .group-name {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
@@ -289,7 +398,7 @@ body {
 }
 
 .group-count {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   margin-top: 2px;
 }
@@ -355,8 +464,8 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   grid-auto-rows: max-content;
-  gap: 20px;
-  padding: 32px;
+  gap: 24px;
+  padding: 32px 40px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
@@ -523,12 +632,49 @@ body {
   text-align: center;
 }
 
+.folder-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: none;
+  gap: 6px;
+}
+
+.folder-card.edit-mode .folder-actions,
+.folder-card:hover .folder-actions {
+  display: flex;
+}
+
+.folder-action-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.folder-action-btn:hover {
+  background: var(--hover-bg);
+  transform: scale(1.1);
+}
+
 /* 拖拽样式 */
-.bookmark-card[draggable="true"] {
+.bookmark-card[draggable="true"],
+.folder-card[draggable="true"],
+.group-item[draggable="true"] {
   cursor: move;
 }
 
-.bookmark-card.dragging {
+.bookmark-card.dragging,
+.folder-card.dragging,
+.group-item.dragging {
   opacity: 0.5;
   transform: scale(0.95);
 }
@@ -545,8 +691,87 @@ body {
   background: rgba(102, 126, 234, 0.1);
 }
 
-.bookmark-card[draggable="true"]:hover {
-  cursor: move;
+/* 排序指示器 - 使用和顶部条一样鲜艳的渐变色 */
+/* 确保正在被拖动的元素不会显示排序指示器 */
+.bookmark-card.drag-before:not(.dragging),
+.folder-card.drag-before:not(.dragging) {
+  position: relative;
+  /* 移除 transform，避免卡片移动导致抖动 */
+}
+
+.bookmark-card.drag-before:not(.dragging)::after,
+.folder-card.drag-before:not(.dragging)::after {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: -12px;
+  bottom: -12px;
+  width: 12px;
+  background: linear-gradient(to bottom, #667eea 0%, #764ba2 100%);
+  border-radius: 6px;
+  z-index: 10;
+  box-shadow: 0 0 25px 5px rgba(102, 126, 234, 1),
+              0 0 40px 10px rgba(118, 75, 162, 0.8),
+              inset 0 0 10px rgba(255, 255, 255, 0.3);
+}
+
+.bookmark-card.drag-after:not(.dragging),
+.folder-card.drag-after:not(.dragging) {
+  position: relative;
+  /* 移除 transform，避免卡片移动导致抖动 */
+}
+
+.bookmark-card.drag-after:not(.dragging)::after,
+.folder-card.drag-after:not(.dragging)::after {
+  content: '';
+  position: absolute;
+  right: -18px;
+  top: -12px;
+  bottom: -12px;
+  width: 12px;
+  background: linear-gradient(to bottom, #667eea 0%, #764ba2 100%);
+  border-radius: 6px;
+  z-index: 10;
+  box-shadow: 0 0 25px 5px rgba(102, 126, 234, 1),
+              0 0 40px 10px rgba(118, 75, 162, 0.8),
+              inset 0 0 10px rgba(255, 255, 255, 0.3);
+}
+
+/* 侧边栏文件夹排序指示器（垂直方向） */
+.group-item.drag-before:not(.dragging) {
+  position: relative;
+}
+
+.group-item.drag-before:not(.dragging)::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: -6px;
+  height: 4px;
+  background: linear-gradient(to right, #667eea 0%, #764ba2 100%);
+  border-radius: 2px;
+  z-index: 10;
+  box-shadow: 0 0 12px 3px rgba(102, 126, 234, 0.8),
+              0 0 20px 5px rgba(118, 75, 162, 0.6);
+}
+
+.group-item.drag-after:not(.dragging) {
+  position: relative;
+}
+
+.group-item.drag-after:not(.dragging)::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -6px;
+  height: 4px;
+  background: linear-gradient(to right, #667eea 0%, #764ba2 100%);
+  border-radius: 2px;
+  z-index: 10;
+  box-shadow: 0 0 12px 3px rgba(102, 126, 234, 0.8),
+              0 0 20px 5px rgba(118, 75, 162, 0.6);
 }
 
 /* 空状态 */
@@ -677,6 +902,42 @@ body {
   font-size: 14px;
   transition: all 0.2s;
   outline: none;
+}
+
+/* 列表框模式的 select（带 size 属性） */
+.form-group select[size] {
+  width: 100%;
+  padding: 4px;
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  transition: all 0.2s;
+  outline: none;
+  overflow-y: auto;
+  cursor: pointer;
+  /* 不设置固定高度，让浏览器根据 size 属性自动计算 */
+}
+
+.form-group select[size] option {
+  padding: 10px 12px;
+  border-radius: 4px;
+  margin: 2px 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.form-group select[size] option:hover {
+  background: var(--hover-bg);
+}
+
+/* 选中的选项样式 */
+.form-group select[size] option:checked {
+  background: var(--primary-color);
+  color: white;
+}
+
+.form-group select {
+  cursor: pointer;
 }
 
 .form-group input:focus,
@@ -909,4 +1170,178 @@ body {
 
 .toggle-switch input:focus + .toggle-slider {
   box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.2);
+}
+
+/* Custom Tooltip / 自定义提示框 */
+.custom-tooltip {
+  position: fixed;
+  z-index: 10000;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3),
+              0 2px 4px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 90vw; /* 后备值，JS 会动态设置 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+  --arrow-offset: 0px;
+}
+
+.custom-tooltip.show {
+  opacity: 1;
+}
+
+.custom-tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: calc(50% + var(--arrow-offset));
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid #764ba2;
+}
+
+/* Tooltip 在卡片下方时，箭头显示在顶部 */
+.custom-tooltip.tooltip-below::before {
+  bottom: auto;
+  top: -6px;
+  border-top: none;
+  border-bottom: 6px solid #667eea;
+}
+
+/* ==================== 自定义对话框 ==================== */
+.custom-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.custom-dialog {
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 480px;
+  width: 90%;
+  animation: slideUp 0.3s ease-out;
+}
+
+.custom-dialog-header {
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.custom-dialog-header h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.custom-dialog-body {
+  padding: 24px;
+}
+
+.custom-dialog-body p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.custom-dialog-footer {
+  padding: 16px 24px 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ==================== 右键菜单 ==================== */
+.context-menu {
+  position: fixed;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  min-width: 160px;
+  z-index: 10000;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.2s;
+  gap: 8px;
+  user-select: none;
+}
+
+.context-menu-item:hover {
+  background-color: var(--hover-bg);
+}
+
+.context-menu-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.context-menu-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
+.context-menu-label {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.context-menu-divider {
+  height: 1px;
+  background-color: var(--border-color);
+  margin: 4px 0;
 }

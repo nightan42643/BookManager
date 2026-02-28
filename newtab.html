@@ -56,6 +56,7 @@
       <div id="groupsList" class="groups-list">
         <!-- 分组将动态加载到这里 -->
       </div>
+      <div class="sidebar-resize-handle"></div>
     </aside>
 
     <!-- 书签展示区 -->
@@ -103,8 +104,12 @@
         </div>
         <div class="form-group">
           <label for="bookmarkGroup" data-i18n="bookmarkGroup">分组</label>
-          <select id="bookmarkGroup">
-            <option value="" data-i18n="selectFolder">选择分组...</option>
+          <select id="bookmarkGroup" size="5">
+          </select>
+        </div>
+        <div class="form-group" id="subfolderSelectGroup" style="display: none;">
+          <label for="bookmarkSubfolder" data-i18n="bookmarkSubfolder">子文件夹</label>
+          <select id="bookmarkSubfolder" size="6">
           </select>
         </div>
       </div>
@@ -210,6 +215,34 @@
       <div class="modal-footer">
         <button id="closeSettingsBtn" class="btn btn-primary" data-i18n="close">关闭</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 自定义确认对话框 -->
+  <div id="customDialog" class="custom-dialog-overlay" style="display: none;">
+    <div class="custom-dialog">
+      <div class="custom-dialog-header">
+        <h3 id="dialogTitle">提示</h3>
+      </div>
+      <div class="custom-dialog-body">
+        <p id="dialogMessage"></p>
+      </div>
+      <div class="custom-dialog-footer">
+        <button id="dialogCancelBtn" class="btn btn-secondary" style="display: none;">取消</button>
+        <button id="dialogConfirmBtn" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右键菜单 -->
+  <div id="contextMenu" class="context-menu" style="display: none;">
+    <div class="context-menu-item" data-action="delete">
+      <span class="context-menu-icon">🗑️</span>
+      <span class="context-menu-label" data-i18n="deleteFolder">删除文件夹</span>
+    </div>
+    <div class="context-menu-item" data-action="rename">
+      <span class="context-menu-icon">✏️</span>
+      <span class="context-menu-label" data-i18n="renameFolder">重命名</span>
     </div>
   </div>
 

@@ -10,6 +10,9 @@ const logger = {
   debug: (message, ...args) => {
     // 从 storage 读取 debug 设置（异步，但不阻塞）
     chrome.storage.local.get(['debugMode'], (result) => {
+      if (chrome.runtime.lastError || !result) {
+        return; // 静默失败，不显示 debug 信息
+      }
       if (result.debugMode) {
         console.log(`%c[BG DEBUG]%c ${message}`, 'color: #9E9E9E; font-weight: bold', 'color: #666', ...args);
       }
@@ -29,6 +32,9 @@ const faviconCache = new Map();
 
 // 正在请求中的 hostname 集合（防止并发重复请求）
 const pendingRequests = new Set();
+
+// 已失败的 hostname 集合（防止重复请求已失败的 URL）
+const failedRequests = new Set();
 
 // 缓存有效期：24 小时（毫秒）
 const CACHE_EXPIRY_TIME = 24 * 60 * 60 * 1000;
@@ -70,6 +76,10 @@ async function scanAllTabsForFavicons() {
             }
           }
           
+          // 注意：这里不检查 failedRequests，因为这些都是真实打开的标签页
+          // 浏览器已经成功加载了页面和 tab.favIconUrl，应该尝试获取
+          // 这样可以让之前失败的 favicon 有机会通过扫描已打开标签页来"恢复"
+          
           logger.debug(`正在更新: ${hostname}`);
           
           // 将最新 favicon 转换为 data URL（或返回原始 URL）
@@ -81,7 +91,14 @@ async function scanAllTabsForFavicons() {
             faviconCache.set(tab.url, cacheEntry); // 也保存完整 URL
             count++;
             logger.debug(`更新成功: ${hostname}`);
+            
+            // 如果之前失败过，现在成功了，从失败列表中移除
+            if (failedRequests.has(hostname)) {
+              failedRequests.delete(hostname);
+            }
           } else {
+            // 记录失败，避免在当前会话中重复请求
+            failedRequests.add(hostname);
             failed++;
           }
         } catch (e) {
@@ -161,6 +178,13 @@ async function fetchFaviconsForUrls(urls) {
         }
       }
       
+      // 检查是否已经失败过（避免重复请求失败的 URL）
+      if (failedRequests.has(hostname)) {
+        logger.debug(`${hostname} 已失败过，跳过重试`);
+        skipped++;
+        return;
+      }
+      
       // 检查是否正在请求中（防止并发重复请求）
       if (pendingRequests.has(hostname)) {
         logger.debug(`${hostname} 正在请求中，跳过`);
@@ -190,9 +214,15 @@ async function fetchFaviconsForUrls(urls) {
           }
           count++;
         } else {
+          // 请求失败，记录到失败集合
+          failedRequests.add(hostname);
+          logger.debug(`${hostname} 获取失败，已记录，不再重试`);
           failed++;
         }
       } catch (e) {
+        // 请求失败，记录到失败集合
+        failedRequests.add(hostname);
+        logger.debug(`${hostname} 请求异常，已记录，不再重试`);
         failed++;
       } finally {
         // 请求完成，移除标记
@@ -254,7 +284,6 @@ async function fetchFaviconAsDataUrl(faviconUrl) {
     }
     // 其他错误（网络、CORS 等）
     return null;
-    return null;
   }
 }
 
@@ -282,6 +311,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
           }
         }
         
+        // 注意：这里不检查 failedRequests，因为这是用户真实访问页面时触发的
+        // 浏览器已经成功加载了页面和 favicon，应该尝试获取
+        // 这样可以让之前失败的 favicon 有机会通过用户访问来"恢复"
+        
         // 将最新的 favicon 转换为 data URL（解决认证问题）
         const result = await fetchFaviconAsDataUrl(faviconUrl);
         
@@ -298,8 +331,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
           // 区分 data URL 和原始 URL
           const isDataUrl = result.startsWith('data:');
           logger.debug(`更新最新 favicon ${isDataUrl ? '(data URL)' : '(URL)'}: ${hostname}`);
+          
+          // 如果之前失败过，现在成功了，从失败列表中移除
+          if (failedRequests.has(hostname)) {
+            failedRequests.delete(hostname);
+          }
         } else {
-          logger.debug(`无法缓存 favicon: ${hostname}`);
+          // 记录失败，避免在当前会话中重复请求
+          failedRequests.add(hostname);
+          logger.debug(`无法缓存 favicon，已标记不再重试: ${hostname}`);
         }
       } catch (e) {
         logger.error('处理 favicon 失败:', e.message);
@@ -342,6 +382,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       
       // 从 storage 查找
       chrome.storage.local.get(['faviconCache'], (result) => {
+        if (chrome.runtime.lastError || !result) {
+          sendResponse({ favicon: null });
+          return;
+        }
+        
         const cache = result.faviconCache || {};
         // 优先查找完整 URL
         if (cache[url] && !isCacheExpired(cache[url])) {
@@ -386,6 +431,16 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 // 启动时加载缓存到内存，清理过期缓存
 chrome.storage.local.get(['faviconCache'], (result) => {
+  if (chrome.runtime.lastError) {
+    logger.info('无法读取缓存，favicon 将按需加载');
+    return;
+  }
+  
+  if (!result) {
+    logger.debug('storage 结果为空，跳过缓存加载');
+    return;
+  }
+  
   logger.debug('开始加载缓存...');
   if (result.faviconCache) {
     const cache = result.faviconCache;
@@ -419,11 +474,18 @@ chrome.storage.local.get(['faviconCache'], (result) => {
   logger.info('缓存加载完成，favicon 将按需加载');
 });
 
-// 监听来自前端的 debug 模式更新
+// 监听来自前端的 debug 模式更新和缓存清除
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'setDebugMode') {
     chrome.storage.local.set({ debugMode: request.enabled });
     logger.info(`Debug 模式已${request.enabled ? '开启' : '关闭'}`);
+    sendResponse({ success: true });
+    return true;
+  } else if (request.action === 'clearFaviconCache') {
+    // 清除内存中的缓存和失败记录
+    faviconCache.clear();
+    failedRequests.clear();
+    logger.info('已清除内存中的 favicon 缓存和失败记录');
     sendResponse({ success: true });
     return true;
   }
