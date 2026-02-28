@@ -7,12 +7,15 @@ A clean, efficient, and beautiful Chrome bookmark management tool displayed as a
 ## ✨ Features
 
 - 🎯 **New Tab Override** - Beautiful bookmark manager interface on every new tab
-- 🔍 **Real-time Search** - Quickly search bookmarks by title and URL
-- 📁 **Folder Management** - Full support for Chrome native bookmark folder structure
-- ✏️ **Bookmark Editing** - Add, edit, and delete bookmarks and folders
-- 🌍 **Bilingual Interface** - Switch between Chinese and English
-- 🎨 **Elegant UI** - Modern gradient design with smooth animations
-- 🖼️ **Website Icons** - Automatic favicon fetching and caching
+- 🔍 **Real-time Search** - Quickly search bookmarks by title and URL with smart filtering
+- 📁 **Folder Tree Navigation** - Expandable/collapsible folder structure with 3-level depth support
+- 📏 **Resizable Sidebar** - Drag to adjust sidebar width (280-600px) with saved preferences
+- ✏️ **Advanced Bookmark Editing** - Add, edit, delete bookmarks and folders
+- 🖱️ **Drag & Drop** - Reorder bookmarks and folders with visual feedback
+- 🗂️ **Context Menu** - Right-click folders for quick actions (delete, rename)
+- 🌍 **Bilingual Interface** - Seamless switching between Chinese and English
+- 🎨 **Elegant UI** - Modern design with smooth animations and custom dialogs
+- 🖼️ **Smart Favicon Loading** - Intelligent caching with automatic retry and lazy loading
 - 🕐 **Smart Greetings** - Time-based greeting messages
 - 🐛 **Debug Mode** - Built-in developer options and logging system
 
@@ -123,17 +126,39 @@ const i18n = {
 
 ## 📝 Version Information
 
-**Current Version:** 1.0.0  
-**Release Date:** 2026-02-27
+**Current Version:** 1.1.0  
+**Release Date:** 2026-02-28
 
-### Version Features
+### What's New in 1.1.0
+
+**New Features:**
+- 🗂️ Folder tree navigation with expand/collapse support
+- 📏 Resizable sidebar (280-600px)
+- 🖱️ Enhanced drag and drop for bookmarks and folders
+- 🗂️ Right-click context menu for folder management
+- 💬 Custom dialog system with beautiful animations
+- 🎯 Better UX with hover tooltips and improved visual hierarchy
+
+**Improvements:**
+- ⚡ Smart favicon loading with batch processing and lazy loading
+- 🎨 Consistent animations across all interactions
+- 🛡️ Better error handling and stability
+
+**Bug Fixes:**
+- 🐛 Fixed search filter being lost when switching languages
+- 🐛 Fixed folder title not updating when switching language
+
+[View Full Changelog](release/1.1.0.md)
+
+### Core Features
 
 - ✅ Complete bookmark management functionality
 - ✅ Bilingual interface support (中文/English)
 - ✅ Automatic website icon fetching and caching
 - ✅ Search and filtering functionality
-- ✅ Folder hierarchy browsing
-- ✅ Edit mode
+- ✅ Folder hierarchy browsing with tree view
+- ✅ Drag and drop support
+- ✅ Context menu for quick actions
 - ✅ Debug and logging system
 - ✅ Responsive layout
 
