@@ -457,6 +457,52 @@ body {
 .bookmarks-actions {
   display: flex;
   gap: 12px;
+  align-items: center;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.selected-count {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  padding: 0 8px;
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-danger:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
 }
 
 /* 书签网格 */
@@ -506,10 +552,6 @@ body {
   transform: scaleX(1);
 }
 
-.bookmark-card.edit-mode {
-  cursor: default;
-}
-
 .bookmark-favicon-large {
   width: 48px;
   height: 48px;
@@ -518,6 +560,7 @@ body {
   object-fit: cover;
   background: var(--bg-color);
   padding: 8px;
+  pointer-events: none;
 }
 
 .bookmark-card-title {
@@ -528,6 +571,7 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .bookmark-card-url {
@@ -536,6 +580,7 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .bookmark-actions {
@@ -546,9 +591,48 @@ body {
   gap: 6px;
 }
 
-.bookmark-card.edit-mode .bookmark-actions,
 .bookmark-card:hover .bookmark-actions {
   display: flex;
+}
+
+/* 选中状态样式 */
+.bookmark-card.selected {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  cursor: default;
+}
+
+.bookmark-card.selected::before {
+  background: linear-gradient(135deg, 
+    rgba(99, 102, 241, 0.1) 0%, 
+    rgba(139, 92, 246, 0.1) 100%);
+  transform: scaleX(1);
+}
+
+.bookmark-selected-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  background: var(--primary-color);
+  color: white;
+  border-radius: 50%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.bookmark-card.selected .bookmark-selected-indicator {
+  display: flex;
+}
+
+.bookmark-card.selected .bookmark-actions {
+  display: none;
 }
 
 .bookmark-action-btn {
@@ -640,7 +724,6 @@ body {
   gap: 6px;
 }
 
-.folder-card.edit-mode .folder-actions,
 .folder-card:hover .folder-actions {
   display: flex;
 }
@@ -1302,7 +1385,7 @@ body {
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   padding: 4px;
-  min-width: 160px;
+  min-width: 180px;
   z-index: 10000;
   animation: fadeIn 0.15s ease-out;
 }
@@ -1314,8 +1397,9 @@ body {
   cursor: pointer;
   border-radius: 6px;
   transition: background-color 0.2s;
-  gap: 8px;
+  gap: 10px;
   user-select: none;
+  white-space: nowrap;
 }
 
 .context-menu-item:hover {
@@ -1330,8 +1414,11 @@ body {
 
 .context-menu-icon {
   font-size: 16px;
-  width: 20px;
+  min-width: 24px;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .context-menu-label {
@@ -1344,4 +1431,85 @@ body {
   height: 1px;
   background-color: var(--border-color);
   margin: 4px 0;
+}
+
+/* Toast 提示系统 */
+.toast-container {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  padding: 16px 24px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  min-width: 300px;
+  max-width: 500px;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.5;
+  animation: toastSlideIn 0.3s ease-out;
+  pointer-events: auto;
+  border: 1px solid var(--border-color);
+}
+
+.toast.toast-success {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+}
+
+.toast.toast-error,
+.toast.toast-delete {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  color: white;
+  border: none;
+}
+
+.toast.toast-warning {
+  background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+  color: #333;
+  border: none;
+}
+
+.toast.toast-info {
+  background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+  color: #333;
+  border: none;
+}
+
+.toast.toast-hide {
+  animation: toastSlideOut 0.3s ease-out forwards;
+}
+
+@keyframes toastSlideIn {
+  from {
+    transform: translateY(100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toastSlideOut {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(30px);
+    opacity: 0;
+  }
 }

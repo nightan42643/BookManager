@@ -33,11 +33,11 @@
     </div>
     
     <div class="header-right">
+      <button id="undoBtn" class="btn btn-secondary" title="撤销" disabled style="opacity: 0.5;">
+        ↩️ <span data-i18n="undo">撤销</span>
+      </button>
       <button id="langToggle" class="btn btn-icon" title="切换语言">
         🌍 中文
-      </button>
-      <button id="addGroupBtn" class="btn btn-icon" title="添加文件夹">
-        ➕ <span data-i18n="newFolder">新建文件夹</span>
       </button>
       <button id="settingsBtn" class="btn btn-icon" title="设置">
         ⚙️ <span data-i18n="settings">设置</span>
@@ -67,9 +67,19 @@
           <button id="addBookmarkBtn" class="btn btn-primary">
             ➕ <span data-i18n="addBookmark">添加书签</span>
           </button>
-          <button id="editModeBtn" class="btn btn-secondary">
-            ✏️ <span data-i18n="editMode">编辑模式</span>
-          </button>
+          <!-- 批量操作按钮组（有选中项时显示） -->
+          <div id="batchActions" class="batch-actions" style="display: none;">
+            <span id="selectedCount" class="selected-count"></span>
+            <button id="selectAllBtn" class="btn btn-secondary">
+              <span data-i18n="selectAll">全选</span>
+            </button>
+            <button id="deleteSelectedBtn" class="btn btn-danger">
+              🗑️ <span data-i18n="deleteSelected">删除选中</span>
+            </button>
+            <button id="clearSelectionBtn" class="btn btn-secondary">
+              ✕ <span data-i18n="clearSelection">清除选择</span>
+            </button>
+          </div>
         </div>
       </div>
       
@@ -236,15 +246,23 @@
 
   <!-- 右键菜单 -->
   <div id="contextMenu" class="context-menu" style="display: none;">
-    <div class="context-menu-item" data-action="delete">
-      <span class="context-menu-icon">🗑️</span>
-      <span class="context-menu-label" data-i18n="deleteFolder">删除文件夹</span>
+    <div class="context-menu-item" data-action="createSubfolder">
+      <span class="context-menu-icon">📁➕</span>
+      <span class="context-menu-label" data-i18n="createSubfolder">创建子文件夹</span>
     </div>
+    <div class="context-menu-divider"></div>
     <div class="context-menu-item" data-action="rename">
       <span class="context-menu-icon">✏️</span>
       <span class="context-menu-label" data-i18n="renameFolder">重命名</span>
     </div>
+    <div class="context-menu-item" data-action="delete">
+      <span class="context-menu-icon">🗑️</span>
+      <span class="context-menu-label" data-i18n="deleteFolder">删除文件夹</span>
+    </div>
   </div>
+
+  <!-- Toast 提示容器 -->
+  <div id="toastContainer" class="toast-container"></div>
 
   <script src="newtab.js"></script>
 </body>

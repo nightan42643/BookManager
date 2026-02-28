@@ -3,11 +3,18 @@ let bookmarkTree = null; // 完整的书签树
 let topLevelFolders = []; // 三个顶级文件夹
 let currentFolderId = null; // 当前选中的文件夹 ID
 let currentFolderData = null; // 当前文件夹的数据
-let editMode = false;
 let editingBookmarkId = null;
 let expandedFolders = new Set(); // 记录展开的文件夹ID
 let failedFaviconHosts = new Set(); // 记录加载失败的 favicon 域名，避免重复请求
 let currentDragInfo = null; // 记录当前拖拽项的信息（用于判断拖拽限制）
+
+// 多选功能系统
+let selectedBookmarks = new Set(); // 选中的书签ID集合
+let lastSelectedBookmark = null; // 最后选中的书签ID（用于Shift连续选择）
+
+// 撤销功能系统
+let undoHistory = []; // 操作历史栈，最多保存10条
+const MAX_UNDO_HISTORY = 10;
 
 // ==================== 多语言系统 ====================
 let currentLang = localStorage.getItem('bookmarkManagerLang') || 'zh-CN';
@@ -34,7 +41,7 @@ const i18n = {
     clearCache: '清空缓存',
     about: '关于',
     version: '版本信息',
-    versionInfo: '书签管理器 v1.0.0',
+    versionInfo: '书签管理器 v1.2.0',
     close: '关闭',
     loading: '加载中...',
     cacheCount: '已缓存 {count} 个图标',
@@ -50,10 +57,13 @@ const i18n = {
     bookmarksCount: '{count} 个书签',
     itemsCount: '{count} 项',
     addBookmark: '添加书签',
-    editMode: '编辑模式',
     editBookmark: '编辑书签',
     createFolder: '创建文件夹',
-    finishEditing: '完成编辑',
+    selectedCount: '已选择 {count} 项',
+    deleteSelected: '删除选中',
+    moveSelected: '移动选中',
+    clearSelection: '清除选择',
+    selectAll: '全选',
     moveBookmarkSuccess: '书签移动成功',
     moveBookmarkError: '移动书签失败',
     bookmarkTitle: '标题',
@@ -70,7 +80,7 @@ const i18n = {
     cancel: '取消',
     save: '保存',
     deleteConfirm: '确定要删除这个书签吗？',
-    deleteFolderConfirm: '确定要删除这个文件夹吗？所有内容将被永久删除。',
+    deleteFolderConfirm: '确定要删除这个文件夹吗？文件夹中的书签将移动到上一级目录。',
     validationError: '请填写标题和网址',
     saveError: '保存失败，请重试',
     deleteError: '删除失败，请重试',
@@ -85,12 +95,26 @@ const i18n = {
     untitledFolder: '未命名文件夹',
     edit: '编辑',
     delete: '删除',
+    deleteBookmark: '删除书签',
     deleteFolder: '删除文件夹',
     renameFolder: '重命名',
     renameFolderTitle: '重命名文件夹',
+    createSubfolder: '创建子文件夹',
+    subfolder: '子文件夹',
     topLevelFolders: '顶级文件夹',
     currentFolderSubfolders: '当前文件夹的子文件夹',
     dragDataIncomplete: '拖拽数据不完整',
+    // Toast 提示文本
+    bookmarkAdded: '书签已添加',
+    bookmarkUpdated: '书签已更新',
+    bookmarkDeleted: '书签已删除',
+    bookmarkMoved: '书签已移动',
+    folderDeleted: '文件夹已删除，书签已移动到上一级',
+    folderMoved: '文件夹已移动',
+    // 撤销功能
+    undo: '撤销',
+    undoSuccess: '已撤销',
+    noUndoHistory: '没有可撤销的操作',
   },
   'en-US': {
     title: 'Bookmark Manager',
@@ -113,7 +137,7 @@ const i18n = {
     clearCache: 'Clear Cache',
     about: 'About',
     version: 'Version',
-    versionInfo: 'Bookmark Manager v1.0.0',
+    versionInfo: 'Bookmark Manager v1.2.0',
     close: 'Close',
     loading: 'Loading...',
     cacheCount: '{count} icons cached',
@@ -129,10 +153,13 @@ const i18n = {
     bookmarksCount: '{count} bookmarks',
     itemsCount: '{count} items',
     addBookmark: 'Add Bookmark',
-    editMode: 'Edit Mode',
     editBookmark: 'Edit Bookmark',
     createFolder: 'Create Folder',
-    finishEditing: 'Finish Editing',
+    selectedCount: '{count} selected',
+    deleteSelected: 'Delete Selected',
+    moveSelected: 'Move Selected',
+    clearSelection: 'Clear Selection',
+    selectAll: 'Select All',
     moveBookmarkSuccess: 'Bookmark moved successfully',
     moveBookmarkError: 'Failed to move bookmark',
     bookmarkTitle: 'Title',
@@ -149,7 +176,7 @@ const i18n = {
     cancel: 'Cancel',
     save: 'Save',
     deleteConfirm: 'Are you sure you want to delete this bookmark?',
-    deleteFolderConfirm: 'Are you sure you want to delete this folder? All contents will be permanently deleted.',
+    deleteFolderConfirm: 'Are you sure you want to delete this folder? Bookmarks will be moved to the parent folder.',
     validationError: 'Please enter title and URL',
     saveError: 'Save failed, please try again',
     deleteError: 'Delete failed, please try again',
@@ -164,12 +191,26 @@ const i18n = {
     untitledFolder: 'Untitled Folder',
     edit: 'Edit',
     delete: 'Delete',
+    deleteBookmark: 'Delete Bookmark',
     deleteFolder: 'Delete Folder',
     renameFolder: 'Rename',
     renameFolderTitle: 'Rename Folder',
+    createSubfolder: 'Create Subfolder',
+    subfolder: 'Subfolder',
     topLevelFolders: 'Top Level Folders',
     currentFolderSubfolders: 'Subfolders of Current Folder',
     dragDataIncomplete: 'Drag data incomplete',
+    // Toast messages
+    bookmarkAdded: 'Bookmark added',
+    bookmarkUpdated: 'Bookmark updated',
+    bookmarkDeleted: 'Bookmark deleted',
+    bookmarkMoved: 'Bookmark moved',
+    folderDeleted: 'Folder deleted, bookmarks moved to parent',
+    folderMoved: 'Folder moved',
+    // Undo function
+    undo: 'Undo',
+    undoSuccess: 'Undone',
+    noUndoHistory: 'No operation to undo',
   }
 };
 
@@ -343,6 +384,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTooltip(); // 初始化自定义 tooltip
   initContextMenu(); // 初始化右键菜单
   initSidebarResize(); // 初始化侧边栏宽度调整
+  updateUndoButtonState(); // 初始化撤销按钮状态
   updateTime();
   updateGreeting();
   applyTranslations(); // 应用翻译
@@ -428,17 +470,19 @@ function setupEventListeners() {
   // 设置
   document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
   
+  // 撤销
+  document.getElementById('undoBtn').addEventListener('click', performUndo);
+  
   // 搜索 - 使用 debounce 优化性能
   document.getElementById('searchInput').addEventListener('input', debounce(handleSearch, 300));
   
   // 添加书签
   document.getElementById('addBookmarkBtn').addEventListener('click', openAddBookmarkModal);
   
-  // 编辑模式
-  document.getElementById('editModeBtn').addEventListener('click', toggleEditMode);
-  
-  // 添加分组按钮改为添加文件夹
-  document.getElementById('addGroupBtn').addEventListener('click', openAddFolderModal);
+  // 批量操作
+  document.getElementById('selectAllBtn').addEventListener('click', selectAll);
+  document.getElementById('deleteSelectedBtn').addEventListener('click', deleteSelectedBookmarks);
+  document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
   
   // 模态框关闭
   document.getElementById('closeModal').addEventListener('click', closeBookmarkModal);
@@ -557,12 +601,11 @@ function getFolderById(folderId, node = bookmarkTree) {
 function countBookmarksInFolder(folder) {
   if (!folder || !folder.children) return 0;
   
+  // 只统计当前文件夹直接下的书签，不包括子文件夹中的书签
   let count = 0;
   folder.children.forEach(child => {
     if (child.url) {
       count++;
-    } else if (child.children) {
-      count += countBookmarksInFolder(child);
     }
   });
   
@@ -755,6 +798,9 @@ function selectFolder(folderId, updateHash = true) {
   currentFolderId = folderId;
   currentFolderData = getFolderById(folderId);
   
+  // 清除选中状态
+  clearSelection();
+  
   // 自动展开所有父文件夹
   expandParentFolders(folderId);
   
@@ -795,39 +841,63 @@ function renderContent() {
   
   emptyState.style.display = 'none';
   
-  // 只获取书签，不包括子文件夹
-  const bookmarks = items.filter(item => item.url);
-  
-  // 递归获取所有子文件夹中的书签
-  function getAllBookmarksRecursively(folder) {
-    let allBookmarks = [];
-    if (folder.children) {
-      folder.children.forEach(item => {
-        if (item.url) {
-          // 是书签
-          allBookmarks.push(item);
-        } else if (item.children) {
-          // 是子文件夹，递归获取
-          allBookmarks = allBookmarks.concat(getAllBookmarksRecursively(item));
-        }
-      });
+  // 计算当前文件夹的层级深度
+  function getFolderLevel(folderId) {
+    let level = 0;
+    let current = findFolderById(folderId);
+    while (current && current.parentId && current.parentId !== '0') {
+      level++;
+      current = findFolderById(current.parentId);
     }
-    return allBookmarks;
+    return level;
   }
   
-  // 获取当前文件夹及其所有子文件夹中的书签
-  const allBookmarks = getAllBookmarksRecursively(currentFolderData);
+  const currentLevel = getFolderLevel(currentFolderId);
+  
+  // 获取直接子文件夹（如果当前层级 >= 2，则显示子文件夹）
+  const subfolders = items.filter(item => item.children);
+  const bookmarks = items.filter(item => item.url);
   
   let html = '';
   
-  // 只渲染书签（包括子文件夹中的书签）
-  allBookmarks.forEach(bookmark => {
+  // 如果当前层级 >= 2，显示子文件夹作为文件夹卡片（因为它们无法在侧边栏展示）
+  if (currentLevel >= 2 && subfolders.length > 0) {
+    subfolders.forEach(folder => {
+      html += createFolderCard(folder);
+    });
+  }
+  
+  // 无论层级如何，都只显示当前文件夹直接下的书签（不包括子文件夹的书签）
+  bookmarks.forEach(bookmark => {
     html += createBookmarkCard(bookmark);
   });
   
   bookmarksGrid.innerHTML = html;
   
-  logger.debug(`当前页面显示 ${allBookmarks.length} 个书签`);
+  logger.debug(`当前页面显示内容，当前文件夹层级: ${currentLevel}`);
+  
+  // 绑定文件夹卡片事件（如果有显示文件夹卡片）
+  document.querySelectorAll('.folder-card').forEach(card => {
+    const folderId = card.dataset.folderId;
+    card.addEventListener('click', (e) => {
+      if (!e.target.closest('.folder-actions')) {
+        selectFolder(folderId);
+      }
+    });
+    
+    // 绑定删除按钮（如果是编辑模式）
+    const deleteBtn = card.querySelector('.delete-folder');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await deleteFolder(folderId);
+      });
+    }
+    
+    // 绑定拖放事件，使文件夹卡片可以接收拖拽的书签
+    setupDraggable(card);
+    setupDropZone(card);
+  });
   
   // 先绑定图标错误处理（简单降级到 emoji）
   document.querySelectorAll('.bookmark-card img').forEach(img => {
@@ -853,12 +923,37 @@ function renderContent() {
     setupTooltip(card);
   });
   
-  // 绑定书签卡片点击事件
+  // 绑定书签卡片点击事件（多选功能）
   document.querySelectorAll('.bookmark-card').forEach(card => {
     card.addEventListener('click', (e) => {
-      if (!editMode && !e.target.closest('.bookmark-actions')) {
-        const url = card.dataset.url;
-        window.open(url, '_blank');
+      // 如果点击的是操作按钮，不处理选择逻辑
+      if (e.target.closest('.bookmark-actions')) {
+        return;
+      }
+      
+      const bookmarkId = card.dataset.bookmarkId;
+      
+      // Ctrl/Cmd + 点击 = 多选/取消选择
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        toggleBookmarkSelection(bookmarkId);
+      }
+      // Shift + 点击 = 连续选择
+      else if (e.shiftKey) {
+        e.preventDefault();
+        selectBookmarkRange(bookmarkId);
+      }
+      // 普通点击 = 打开链接（如果没有选中项）或选择单个
+      else {
+        if (selectedBookmarks.size === 0) {
+          // 没有选中项，直接打开链接
+          const url = card.dataset.url;
+          window.open(url, '_blank');
+        } else {
+          // 有选中项，清除所有选择并选中当前项
+          clearSelection();
+          toggleBookmarkSelection(bookmarkId);
+        }
       }
     });
   });
@@ -884,10 +979,9 @@ function renderContent() {
 // 创建文件夹卡片
 function createFolderCard(folder) {
   const count = countBookmarksInFolder(folder);
-  const editModeClass = editMode ? 'edit-mode' : '';
   
   return `
-    <div class="folder-card ${editModeClass}" 
+    <div class="folder-card" 
          data-folder-id="${folder.id}"
          data-droppable="true"
          draggable="true">
@@ -905,12 +999,11 @@ function createFolderCard(folder) {
 
 // 创建书签卡片
 function createBookmarkCard(bookmark) {
-  const editModeClass = editMode ? 'edit-mode' : '';
   // 使用本地默认图标作为占位符
   const placeholderIcon = 'default-favicon.svg';
   
   return `
-    <div class="bookmark-card ${editModeClass}" 
+    <div class="bookmark-card" 
          data-bookmark-id="${bookmark.id}" 
          data-url="${escapeHtml(bookmark.url)}"
          draggable="true">
@@ -928,6 +1021,7 @@ function createBookmarkCard(bookmark) {
           🗑️
         </button>
       </div>
+      <div class="bookmark-selected-indicator">✓</div>
     </div>
   `;
 }
@@ -1347,9 +1441,34 @@ function renderSearchResults(bookmarks) {
   // 绑定事件
   document.querySelectorAll('.bookmark-card').forEach(card => {
     card.addEventListener('click', (e) => {
-      if (!editMode && !e.target.closest('.bookmark-actions')) {
-        const url = card.dataset.url;
-        window.open(url, '_blank');
+      // 如果点击的是操作按钮，不处理选择逻辑
+      if (e.target.closest('.bookmark-actions')) {
+        return;
+      }
+      
+      const bookmarkId = card.dataset.bookmarkId;
+      
+      // Ctrl/Cmd + 点击 = 多选/取消选择
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        toggleBookmarkSelection(bookmarkId);
+      }
+      // Shift + 点击 = 连续选择
+      else if (e.shiftKey) {
+        e.preventDefault();
+        selectBookmarkRange(bookmarkId);
+      }
+      // 普通点击 = 打开链接（如果没有选中项）或选择单个
+      else {
+        if (selectedBookmarks.size === 0) {
+          // 没有选中项，直接打开链接
+          const url = card.dataset.url;
+          window.open(url, '_blank');
+        } else {
+          // 有选中项，清除所有选择并选中当前项
+          clearSelection();
+          toggleBookmarkSelection(bookmarkId);
+        }
       }
     });
     setupTooltip(card);
@@ -1372,19 +1491,92 @@ function renderSearchResults(bookmarks) {
   });
 }
 
-// ==================== 编辑模式 ====================
-function toggleEditMode() {
-  editMode = !editMode;
-  const btn = document.getElementById('editModeBtn');
-  const span = btn.querySelector('span');
-  if (span) {
-    span.textContent = editMode ? t('finishEditing') : t('editMode');
+// ==================== 多选功能 ====================
+function toggleBookmarkSelection(bookmarkId) {
+  if (selectedBookmarks.has(bookmarkId)) {
+    selectedBookmarks.delete(bookmarkId);
+    lastSelectedBookmark = null;
   } else {
-    btn.innerHTML = editMode ? `✓ ${t('finishEditing')}` : `✏️ ${t('editMode')}`;
+    selectedBookmarks.add(bookmarkId);
+    lastSelectedBookmark = bookmarkId;
   }
-  btn.classList.toggle('btn-primary', editMode);
-  btn.classList.toggle('btn-secondary', !editMode);
-  renderContent();
+  updateSelectionUI();
+}
+
+function selectBookmarkRange(bookmarkId) {
+  if (!lastSelectedBookmark) {
+    // 如果没有上一个选中项，就当作普通选择
+    toggleBookmarkSelection(bookmarkId);
+    return;
+  }
+  
+  // 获取当前显示的所有书签卡片
+  const cards = Array.from(document.querySelectorAll('.bookmark-card'));
+  const startIndex = cards.findIndex(card => card.dataset.bookmarkId === lastSelectedBookmark);
+  const endIndex = cards.findIndex(card => card.dataset.bookmarkId === bookmarkId);
+  
+  if (startIndex === -1 || endIndex === -1) return;
+  
+  // 确定范围
+  const minIndex = Math.min(startIndex, endIndex);
+  const maxIndex = Math.max(startIndex, endIndex);
+  
+  // 选中范围内的所有书签
+  for (let i = minIndex; i <= maxIndex; i++) {
+    const id = cards[i].dataset.bookmarkId;
+    selectedBookmarks.add(id);
+  }
+  
+  lastSelectedBookmark = bookmarkId;
+  updateSelectionUI();
+}
+
+function clearSelection() {
+  selectedBookmarks.clear();
+  lastSelectedBookmark = null;
+  updateSelectionUI();
+}
+
+function selectAll() {
+  const cards = document.querySelectorAll('.bookmark-card');
+  cards.forEach(card => {
+    selectedBookmarks.add(card.dataset.bookmarkId);
+  });
+  if (cards.length > 0) {
+    lastSelectedBookmark = cards[cards.length - 1].dataset.bookmarkId;
+  }
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  // 更新所有书签卡片的选中状态
+  document.querySelectorAll('.bookmark-card').forEach(card => {
+    const bookmarkId = card.dataset.bookmarkId;
+    if (selectedBookmarks.has(bookmarkId)) {
+      card.classList.add('selected');
+    } else {
+      card.classList.remove('selected');
+    }
+  });
+  
+  // 更新批量操作按钮的显示状态
+  updateBatchActionsUI();
+}
+
+function updateBatchActionsUI() {
+  const batchActions = document.getElementById('batchActions');
+  const selectedCountEl = document.getElementById('selectedCount');
+  
+  if (!batchActions) return;
+  
+  if (selectedBookmarks.size > 0) {
+    batchActions.style.display = 'flex';
+    if (selectedCountEl) {
+      selectedCountEl.textContent = t('selectedCount', { count: selectedBookmarks.size });
+    }
+  } else {
+    batchActions.style.display = 'none';
+  }
 }
 
 // ==================== 书签操作 ====================
@@ -1511,8 +1703,33 @@ function updateSubfolderSelect() {
   html += buildSubfolderOptions(subfolders);
   
   subfolderSelect.innerHTML = html;
-  subfolderSelect.innerHTML = html;
   subfolderGroup.style.display = 'block';
+  
+  // 移除旧的事件监听器（如果存在）
+  const oldHandler = subfolderSelect._clickHandler;
+  if (oldHandler) {
+    subfolderSelect.removeEventListener('mousedown', oldHandler);
+  }
+  
+  // 使用 mousedown 事件（在选择状态改变之前触发）
+  const mousedownHandler = function(e) {
+    const clickedOption = e.target;
+    if (clickedOption.tagName === 'OPTION') {
+      // 记录点击时的选中状态
+      const wasSelected = clickedOption.selected;
+      
+      // 如果点击的是已选中的选项，取消选择
+      if (wasSelected) {
+        e.preventDefault();
+        clickedOption.selected = false;
+        subfolderSelect.value = '';
+      }
+    }
+  };
+  
+  subfolderSelect.addEventListener('mousedown', mousedownHandler);
+  // 保存处理器引用以便后续移除
+  subfolderSelect._clickHandler = mousedownHandler;
 }
 
 // 已移除滚轮事件处理函数（使用列表框模式不再需要）
@@ -1547,18 +1764,46 @@ async function saveBookmark() {
   
   try {
     if (editingBookmarkId) {
-      // 编辑现有书签
+      // 编辑现有书签 - 记录原值用于撤销
+      const [oldBookmark] = await chrome.bookmarks.get(editingBookmarkId);
+      
       await chrome.bookmarks.update(editingBookmarkId, { title, url });
+      
+      // 记录操作历史
+      recordOperation({
+        type: 'update',
+        itemType: 'bookmark',
+        data: {
+          id: editingBookmarkId,
+          oldTitle: oldBookmark.title,
+          oldUrl: oldBookmark.url,
+          newTitle: title,
+          newUrl: url
+        }
+      });
+      
+      showToast(t('bookmarkUpdated'), 'success');
     } else {
       // 确定书签的父文件夹：优先使用子文件夹，否则使用顶级文件夹（总是有值）
       const parentId = subfolderId || topFolderId;
       
       // 创建新书签
-      await chrome.bookmarks.create({
+      const newBookmark = await chrome.bookmarks.create({
         title,
         url,
         parentId
       });
+      
+      // 记录操作历史
+      recordOperation({
+        type: 'add',
+        itemType: 'bookmark',
+        data: {
+          id: newBookmark.id
+        }
+      });
+      
+      showToast(t('bookmarkAdded'), 'success');
     }
     
     await loadBookmarks();
@@ -1575,11 +1820,90 @@ async function deleteBookmark(bookmarkId) {
   if (!confirmed) return;
   
   try {
+    // 记录书签信息用于撤销
+    const [bookmark] = await chrome.bookmarks.get(bookmarkId);
+    
     await chrome.bookmarks.remove(bookmarkId);
+    
+    // 记录操作历史
+    recordOperation({
+      type: 'delete',
+      itemType: 'bookmark',
+      data: {
+        id: bookmarkId,
+        title: bookmark.title,
+        url: bookmark.url,
+        parentId: bookmark.parentId,
+        index: bookmark.index
+      }
+    });
+    
+    showToast(t('bookmarkDeleted'), 'delete');
     await loadBookmarks();
     selectFolder(currentFolderId);
   } catch (error) {
     logger.error(t('deleteError'), error);
+    await showAlert(t('deleteError'), t('error'));
+  }
+}
+
+async function deleteSelectedBookmarks() {
+  if (selectedBookmarks.size === 0) return;
+  
+  const count = selectedBookmarks.size;
+  const confirmed = await showConfirm(
+    `确定要删除选中的 ${count} 个书签吗？此操作可以撤销。`,
+    t('deleteBookmark')
+  );
+  if (!confirmed) return;
+  
+  try {
+    const bookmarkIds = Array.from(selectedBookmarks);
+    const deletedBookmarks = [];
+    
+    // 先记录所有书签信息用于撤销
+    for (const bookmarkId of bookmarkIds) {
+      try {
+        const [bookmark] = await chrome.bookmarks.get(bookmarkId);
+        deletedBookmarks.push({
+          id: bookmarkId,
+          title: bookmark.title,
+          url: bookmark.url,
+          parentId: bookmark.parentId,
+          index: bookmark.index
+        });
+      } catch (error) {
+        logger.warn(`获取书签 ${bookmarkId} 信息失败:`, error);
+      }
+    }
+    
+    // 逐个删除书签
+    for (const bookmarkId of bookmarkIds) {
+      try {
+        await chrome.bookmarks.remove(bookmarkId);
+      } catch (error) {
+        logger.warn(`删除书签 ${bookmarkId} 失败:`, error);
+      }
+    }
+    
+    // 记录批量删除操作到撤销历史
+    if (deletedBookmarks.length > 0) {
+      recordOperation({
+        type: 'batchDelete',
+        itemType: 'bookmark',
+        data: {
+          bookmarks: deletedBookmarks,
+          count: deletedBookmarks.length
+        }
+      });
+    }
+    
+    clearSelection();
+    showToast(`已删除 ${count} 个书签`, 'delete');
+    await loadBookmarks();
+    selectFolder(currentFolderId);
+  } catch (error) {
+    logger.error('批量删除失败', error);
     await showAlert(t('deleteError'), t('error'));
   }
 }
@@ -1589,15 +1913,68 @@ async function deleteFolder(folderId) {
   if (!confirmed) return;
   
   try {
-    // 使用 removeTree 删除文件夹及其所有内容
-    await chrome.bookmarks.removeTree(folderId);
-    await loadBookmarks();
-    // 删除后保持在当前文件夹
-    if (currentFolderId) {
-      selectFolder(currentFolderId);
-    } else if (topLevelFolders.length > 0) {
-      selectFolder(topLevelFolders[0].id);
+    // 获取要删除的文件夹
+    const folder = findFolderById(folderId);
+    if (!folder || !folder.parentId) {
+      await showAlert('无法删除系统文件夹', t('error'));
+      return;
     }
+    
+    // 记录文件夹信息用于撤销
+    const [folderInfo] = await chrome.bookmarks.get(folderId);
+    
+    const parentId = folder.parentId;
+    
+    // 递归收集该文件夹及所有子文件夹中的书签
+    function collectAllBookmarks(folderNode) {
+      let bookmarks = [];
+      if (folderNode.children) {
+        folderNode.children.forEach(item => {
+          if (item.url) {
+            bookmarks.push(item);
+          } else if (item.children) {
+            bookmarks = bookmarks.concat(collectAllBookmarks(item));
+          }
+        });
+      }
+      return bookmarks;
+    }
+    
+    const bookmarksToMove = collectAllBookmarks(folder);
+    
+    // 先将所有书签移动到父文件夹
+    for (const bookmark of bookmarksToMove) {
+      try {
+        await chrome.bookmarks.move(bookmark.id, { parentId: parentId });
+        logger.debug(`已将书签 "${bookmark.title}" 移动到父文件夹`);
+      } catch (error) {
+        logger.error(`移动书签失败: ${bookmark.title}`, error);
+      }
+    }
+    
+    // 然后删除空文件夹（使用 removeTree 会删除该文件夹及其所有子文件夹）
+    await chrome.bookmarks.removeTree(folderId);
+    
+    // 记录操作历史 - 保存书签ID列表用于撤销时恢复
+    recordOperation({
+      type: 'deleteFolder',
+      itemType: 'folder',
+      data: {
+        id: folderId,
+        title: folderInfo.title,
+        parentId: parentId,
+        index: folderInfo.index,
+        bookmarkIds: bookmarksToMove.map(b => b.id), // 记录书签ID用于撤销
+        bookmarkCount: bookmarksToMove.length
+      }
+    });
+    
+    showToast(t('folderDeleted'), 'delete');
+    logger.debug(`已删除文件夹，共移动 ${bookmarksToMove.length} 个书签到上一级`);
+    
+    await loadBookmarks();
+    // 删除后选择父文件夹
+    selectFolder(parentId);
   } catch (error) {
     logger.error(t('deleteError'), error);
     await showAlert(t('deleteError'), t('error'));
@@ -1673,6 +2050,9 @@ function hideContextMenu() {
 
 async function handleContextMenuAction(action, folderId) {
   switch (action) {
+    case 'createSubfolder':
+      await createSubfolder(folderId);
+      break;
     case 'delete':
       await deleteFolder(folderId);
       break;
@@ -1680,6 +2060,31 @@ async function handleContextMenuAction(action, folderId) {
       // TODO: 实现重命名功能
       await showAlert('重命名功能即将推出', '提示');
       break;
+  }
+}
+
+// 创建子文件夹
+async function createSubfolder(parentFolderId) {
+  const folderName = await showPrompt(t('subfolder'), t('createSubfolder'));
+  
+  if (!folderName || !folderName.trim()) {
+    return; // 用户取消或输入为空
+  }
+  
+  try {
+    await chrome.bookmarks.create({
+      title: folderName.trim(),
+      parentId: parentFolderId
+    });
+    
+    showToast(`已创建子文件夹"${folderName.trim()}"`, 'success');
+    await loadBookmarks();
+    // 展开父文件夹以显示新创建的子文件夹
+    expandedFolders.add(parentFolderId);
+    renderFolders();
+  } catch (error) {
+    logger.error(t('createFolderError'), error);
+    await showAlert(t('createFolderError'), t('error'));
   }
 }
 
@@ -1860,14 +2265,38 @@ function setupDraggable(element) {
     
     // 记录拖拽信息（包括 parentId 用于判断是否允许拖拽）
     if (bookmarkId) {
-      e.dataTransfer.setData('bookmarkId', bookmarkId);
-      logger.debug(`开始拖拽书签: ${bookmarkId}`);
-      try {
-        const [item] = await chrome.bookmarks.get(bookmarkId);
-        currentDragInfo = { type: 'bookmark', id: bookmarkId, parentId: item.parentId };
-      } catch (error) {
-        logger.error('获取书签信息失败', error);
-        currentDragInfo = { type: 'bookmark', id: bookmarkId };
+      // 检查是否有选中的书签
+      if (selectedBookmarks.size > 0 && selectedBookmarks.has(bookmarkId)) {
+        // 拖动多个选中的书签
+        const bookmarkIds = Array.from(selectedBookmarks);
+        e.dataTransfer.setData('bookmarkIds', JSON.stringify(bookmarkIds));
+        e.dataTransfer.setData('isBatch', 'true');
+        logger.debug(`开始拖拽 ${bookmarkIds.length} 个书签`);
+        
+        // 为所有选中的卡片添加拖动样式
+        document.querySelectorAll('.bookmark-card.selected').forEach(card => {
+          card.classList.add('dragging');
+        });
+        
+        try {
+          const [item] = await chrome.bookmarks.get(bookmarkId);
+          currentDragInfo = { type: 'bookmark', id: bookmarkId, parentId: item.parentId, isBatch: true, count: bookmarkIds.length };
+        } catch (error) {
+          logger.error('获取书签信息失败', error);
+          currentDragInfo = { type: 'bookmark', id: bookmarkId, isBatch: true, count: bookmarkIds.length };
+        }
+      } else {
+        // 拖动单个书签
+        e.dataTransfer.setData('bookmarkId', bookmarkId);
+        logger.debug(`开始拖拽书签: ${bookmarkId}`);
+        try {
+          const [item] = await chrome.bookmarks.get(bookmarkId);
+          currentDragInfo = { type: 'bookmark', id: bookmarkId, parentId: item.parentId };
+        } catch (error) {
+          logger.error('获取书签信息失败', error);
+          currentDragInfo = { type: 'bookmark', id: bookmarkId };
+        }
+        element.classList.add('dragging');
       }
     } else if (folderId) {
       e.dataTransfer.setData('folderId', folderId);
@@ -1879,13 +2308,16 @@ function setupDraggable(element) {
         logger.error('获取文件夹信息失败', error);
         currentDragInfo = { type: 'folder', id: folderId };
       }
+      element.classList.add('dragging');
     }
-    
-    element.classList.add('dragging');
   });
   
   element.addEventListener('dragend', (e) => {
     element.classList.remove('dragging');
+    // 清除所有选中卡片的拖动样式
+    document.querySelectorAll('.bookmark-card.dragging').forEach(card => {
+      card.classList.remove('dragging');
+    });
     currentDragInfo = null; // 清除拖拽信息
   });
 }
@@ -2023,11 +2455,27 @@ function setupDropZone(element) {
     
     const bookmarkId = e.dataTransfer.getData('bookmarkId');
     const draggedFolderId = e.dataTransfer.getData('folderId');
-    const draggedId = bookmarkId || draggedFolderId;
+    const isBatch = e.dataTransfer.getData('isBatch') === 'true';
+    const bookmarkIdsStr = e.dataTransfer.getData('bookmarkIds');
     
-    if (!draggedId) {
-      logger.error(t('dragDataIncomplete'));
-      return;
+    let draggedIds = [];
+    if (isBatch && bookmarkIdsStr) {
+      // 批量拖动
+      try {
+        draggedIds = JSON.parse(bookmarkIdsStr);
+        logger.debug(`批量拖动 ${draggedIds.length} 个书签`);
+      } catch (error) {
+        logger.error('解析书签ID列表失败', error);
+        return;
+      }
+    } else {
+      // 单个拖动
+      const draggedId = bookmarkId || draggedFolderId;
+      if (!draggedId) {
+        logger.error(t('dragDataIncomplete'));
+        return;
+      }
+      draggedIds = [draggedId];
     }
     
     const targetFolderId = element.dataset.folderId;
@@ -2035,7 +2483,7 @@ function setupDropZone(element) {
     const targetId = targetFolderId || targetBookmarkId;
     
     // 防止将文件夹拖到自己里面或自己的位置
-    if (draggedFolderId === targetFolderId) {
+    if (!isBatch && draggedFolderId && draggedFolderId === targetFolderId) {
       logger.debug('不能将文件夹移动到自己里面');
       return;
     }
@@ -2043,10 +2491,69 @@ function setupDropZone(element) {
     try {
       if (dropMode === 'into' && targetFolderId) {
         // 移动到文件夹内
-        logger.debug(`尝试移动 ${draggedId} 到文件夹 ${targetFolderId}`);
-        await chrome.bookmarks.move(draggedId, { parentId: targetFolderId });
-        logger.info(bookmarkId ? t('moveBookmarkSuccess') : '文件夹移动成功');
+        logger.debug(`尝试移动 ${draggedIds.length} 个项目到文件夹 ${targetFolderId}`);
+        
+        const movedItems = []; // 记录所有移动的项目信息
+        
+        for (const draggedId of draggedIds) {
+          // 获取拖动项的原信息用于记录
+          const [draggedItem] = await chrome.bookmarks.get(draggedId);
+          const oldParentId = draggedItem.parentId;
+          const oldIndex = draggedItem.index;
+          const isBookmark = draggedItem.url !== undefined;
+          
+          movedItems.push({
+            id: draggedId,
+            oldParentId: oldParentId,
+            oldIndex: oldIndex,
+            isBookmark: isBookmark
+          });
+          
+          await chrome.bookmarks.move(draggedId, { parentId: targetFolderId });
+        }
+        
+        // 记录操作历史（单个和批量都支持撤销）
+        if (isBatch) {
+          recordOperation({
+            type: 'batchMove',
+            itemType: 'bookmark',
+            data: {
+              items: movedItems,
+              newParentId: targetFolderId,
+              count: draggedIds.length
+            }
+          });
+          showToast(`已移动 ${draggedIds.length} 个书签`, 'success');
+          clearSelection(); // 清除选中状态
+        } else {
+          // 单个移动，记录操作历史
+          const movedItem = movedItems[0];
+          recordOperation({
+            type: 'move',
+            itemType: movedItem.isBookmark ? 'bookmark' : 'folder',
+            data: {
+              id: movedItem.id,
+              oldParentId: movedItem.oldParentId,
+              oldIndex: movedItem.oldIndex,
+              newParentId: targetFolderId
+            }
+          });
+          
+          const [item] = await chrome.bookmarks.get(draggedIds[0]);
+          const isBookmark = item.url !== undefined;
+          logger.info(isBookmark ? t('moveBookmarkSuccess') : '文件夹移动成功');
+          showToast(isBookmark ? t('bookmarkMoved') : t('folderMoved'), 'success');
+        }
       } else if (dropMode === 'before' || dropMode === 'after') {
+        // 批量拖动不支持排序
+        if (isBatch) {
+          logger.debug('批量拖动不支持排序功能');
+          showToast('批量拖动请拖到文件夹上', 'warning');
+          return;
+        }
+        
+        const draggedId = draggedIds[0];
+        
         // 排序：插入到目标位置
         logger.debug(`排序模式: ${dropMode}, 目标ID: ${targetId}`);
         
@@ -2065,7 +2572,7 @@ function setupDropZone(element) {
         // 检查是否试图将非顶级文件夹移动到顶级位置
         // 顶级文件夹的 parentId 是 '0'
         const isTargetTopLevel = targetItem.parentId === '0';
-        const isDraggedFolder = draggedFolderId && !draggedItem.url; // 是文件夹且不是书签
+        const isDraggedFolder = !draggedItem.url; // 是文件夹（没有url属性）
         const isDraggedTopLevel = draggedItem.parentId === '0';
         
         if (isTargetTopLevel && isDraggedFolder && !isDraggedTopLevel) {
@@ -2103,11 +2610,32 @@ function setupDropZone(element) {
         }
         
         logger.debug(`移动 ${draggedId} 到位置 ${targetIndex} (父文件夹: ${targetItem.parentId})`);
+        
+        // 获取原信息
+        const oldParentId = draggedItem.parentId;
+        const oldIndex = draggedItem.index;
+        
         await chrome.bookmarks.move(draggedId, {
           parentId: targetItem.parentId,
           index: targetIndex
         });
+        
+        // 记录操作历史
+        const isBookmark = draggedItem.url !== undefined;
+        recordOperation({
+          type: 'move',
+          itemType: isBookmark ? 'bookmark' : 'folder',
+          data: {
+            id: draggedId,
+            oldParentId: oldParentId,
+            oldIndex: oldIndex,
+            newParentId: targetItem.parentId,
+            newIndex: targetIndex
+          }
+        });
+        
         logger.info('排序成功');
+        showToast(isBookmark ? t('bookmarkMoved') : t('folderMoved'), 'success');
       }
       
       // 重新加载书签树并刷新显示
@@ -2220,6 +2748,218 @@ function showConfirm(message, title = '确认') {
     confirmBtn.addEventListener('click', handleConfirm);
     cancelBtn.addEventListener('click', handleCancel);
   });
+}
+
+// 简单的输入提示框（使用原生 prompt）
+function showPrompt(defaultValue = '', title = '请输入') {
+  return new Promise((resolve) => {
+    // 使用 setTimeout 避免阻塞
+    setTimeout(() => {
+      const result = window.prompt(title, defaultValue);
+      resolve(result);
+    }, 0);
+  });
+}
+
+// ==================== Toast 提示系统 ====================
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  
+  // 创建 toast 元素
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  
+  // 添加到容器
+  container.appendChild(toast);
+  
+  // 3秒后开始淡出动画
+  setTimeout(() => {
+    toast.classList.add('toast-hide');
+    // 动画完成后移除元素
+    setTimeout(() => {
+      if (toast.parentNode === container) {
+        container.removeChild(toast);
+      }
+    }, 300);
+  }, 3000);
+}
+
+// ==================== 撤销功能系统 ====================
+/**
+ * 记录可撤销的操作
+ * @param {Object} operation - 操作对象
+ * @param {string} operation.type - 操作类型: 'add', 'update', 'delete', 'move'
+ * @param {string} operation.itemType - 项目类型: 'bookmark', 'folder'
+ * @param {Object} operation.data - 操作数据
+ */
+function recordOperation(operation) {
+  undoHistory.push(operation);
+  
+  // 保持历史记录不超过最大限制
+  if (undoHistory.length > MAX_UNDO_HISTORY) {
+    undoHistory.shift(); // 移除最旧的记录
+  }
+  
+  // 更新撤销按钮状态
+  updateUndoButtonState();
+  
+  logger.debug('操作已记录:', operation);
+}
+
+/**
+ * 执行撤销操作
+ */
+async function performUndo() {
+  if (undoHistory.length === 0) {
+    showToast(t('noUndoHistory'), 'warning');
+    return;
+  }
+  
+  const operation = undoHistory.pop();
+  logger.debug('执行撤销:', operation);
+  
+  try {
+    switch (operation.type) {
+      case 'add':
+        // 撤销添加 = 删除
+        if (operation.itemType === 'bookmark') {
+          await chrome.bookmarks.remove(operation.data.id);
+        } else if (operation.itemType === 'folder') {
+          // 文件夹可能有内容，使用 removeTree
+          await chrome.bookmarks.removeTree(operation.data.id);
+        }
+        break;
+        
+      case 'update':
+        // 撤销更新 = 恢复原值
+        const updateData = {
+          title: operation.data.oldTitle
+        };
+        // 只有书签才有 url 字段
+        if (operation.data.oldUrl !== undefined) {
+          updateData.url = operation.data.oldUrl;
+        }
+        await chrome.bookmarks.update(operation.data.id, updateData);
+        break;
+        
+      case 'delete':
+        // 撤销删除 = 重新创建
+        const createData = {
+          title: operation.data.title,
+          parentId: operation.data.parentId,
+          index: operation.data.index
+        };
+        if (operation.itemType === 'bookmark') {
+          createData.url = operation.data.url;
+        }
+        await chrome.bookmarks.create(createData);
+        break;
+        
+      case 'move':
+        // 撤销移动 = 移回原位置
+        await chrome.bookmarks.move(operation.data.id, {
+          parentId: operation.data.oldParentId,
+          index: operation.data.oldIndex
+        });
+        break;
+        
+      case 'batchMove':
+        // 撤销批量移动 = 将所有书签移回原位置
+        // 按倒序撤销，避免索引冲突
+        for (let i = operation.data.items.length - 1; i >= 0; i--) {
+          const item = operation.data.items[i];
+          try {
+            await chrome.bookmarks.move(item.id, {
+              parentId: item.oldParentId,
+              index: item.oldIndex
+            });
+          } catch (error) {
+            logger.error(`撤销移动书签 ${item.id} 失败:`, error);
+          }
+        }
+        break;
+        
+      case 'batchDelete':
+        // 撤销批量删除 = 重新创建所有书签
+        // 按倒序创建，保持原始顺序
+        for (let i = operation.data.bookmarks.length - 1; i >= 0; i--) {
+          const bookmark = operation.data.bookmarks[i];
+          try {
+            await chrome.bookmarks.create({
+              title: bookmark.title,
+              url: bookmark.url,
+              parentId: bookmark.parentId,
+              index: bookmark.index
+            });
+          } catch (error) {
+            logger.error(`恢复书签 ${bookmark.title} 失败:`, error);
+          }
+        }
+        break;
+        
+      case 'deleteFolder':
+        // 撤销删除文件夹 = 重新创建文件夹并将书签移回去
+        const newFolder = await chrome.bookmarks.create({
+          title: operation.data.title,
+          parentId: operation.data.parentId,
+          index: operation.data.index
+        });
+        
+        // 将之前移动到父文件夹的书签移回新文件夹
+        if (operation.data.bookmarkIds && operation.data.bookmarkIds.length > 0) {
+          let movedCount = 0;
+          for (const bookmarkId of operation.data.bookmarkIds) {
+            try {
+              // 检查书签是否仍然存在
+              await chrome.bookmarks.get(bookmarkId);
+              await chrome.bookmarks.move(bookmarkId, { parentId: newFolder.id });
+              movedCount++;
+            } catch (error) {
+              logger.warn(`书签 ${bookmarkId} 不存在或已被删除，跳过`);
+            }
+          }
+          logger.debug(`已将 ${movedCount}/${operation.data.bookmarkIds.length} 个书签移回文件夹`);
+        }
+        break;
+        
+      default:
+        logger.error('未知的操作类型:', operation.type);
+        return;
+    }
+    
+    showToast(t('undoSuccess'), 'info');
+    
+    // 刷新显示
+    await loadBookmarks();
+    selectFolder(currentFolderId, false);
+    renderFolders();
+    
+  } catch (error) {
+    logger.error('撤销操作失败:', error);
+    await showAlert('撤销失败: ' + error.message, t('error'));
+    // 如果撤销失败，将操作重新放回历史记录
+    undoHistory.push(operation);
+  }
+  
+  // 更新撤销按钮状态
+  updateUndoButtonState();
+}
+
+/**
+ * 更新撤销按钮的启用/禁用状态
+ */
+function updateUndoButtonState() {
+  const undoBtn = document.getElementById('undoBtn');
+  if (undoBtn) {
+    if (undoHistory.length > 0) {
+      undoBtn.disabled = false;
+      undoBtn.style.opacity = '1';
+    } else {
+      undoBtn.disabled = true;
+      undoBtn.style.opacity = '0.5';
+    }
+  }
 }
 
 // 防抖函数

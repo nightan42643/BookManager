@@ -124,44 +124,6 @@ const i18n = {
 };
 ```
 
-## 📝 Version Information
-
-**Current Version:** 1.1.0  
-**Release Date:** 2026-02-28
-
-### What's New in 1.1.0
-
-**New Features:**
-- 🗂️ Folder tree navigation with expand/collapse support
-- 📏 Resizable sidebar (280-600px)
-- 🖱️ Enhanced drag and drop for bookmarks and folders
-- 🗂️ Right-click context menu for folder management
-- 💬 Custom dialog system with beautiful animations
-- 🎯 Better UX with hover tooltips and improved visual hierarchy
-
-**Improvements:**
-- ⚡ Smart favicon loading with batch processing and lazy loading
-- 🎨 Consistent animations across all interactions
-- 🛡️ Better error handling and stability
-
-**Bug Fixes:**
-- 🐛 Fixed search filter being lost when switching languages
-- 🐛 Fixed folder title not updating when switching language
-
-[View Full Changelog](release/1.1.0.md)
-
-### Core Features
-
-- ✅ Complete bookmark management functionality
-- ✅ Bilingual interface support (中文/English)
-- ✅ Automatic website icon fetching and caching
-- ✅ Search and filtering functionality
-- ✅ Folder hierarchy browsing with tree view
-- ✅ Drag and drop support
-- ✅ Context menu for quick actions
-- ✅ Debug and logging system
-- ✅ Responsive layout
-
 ## 📄 License
 
 MIT License
