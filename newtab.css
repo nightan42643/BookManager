@@ -1350,6 +1350,28 @@ body {
   color: var(--text-secondary);
 }
 
+.custom-dialog-body input[type="text"] {
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 15px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-color);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.custom-dialog-body input[type="text"]:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(138, 43, 226, 0.1);
+}
+
+.custom-dialog-body input[type="text"]::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
 .custom-dialog-footer {
   padding: 16px 24px 24px;
   display: flex;

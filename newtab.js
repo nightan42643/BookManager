@@ -16,6 +16,483 @@ let lastSelectedBookmark = null; // 最后选中的书签ID（用于Shift连续�
 let undoHistory = []; // 操作历史栈，最多保存10条
 const MAX_UNDO_HISTORY = 10;
 
+// ==================== 事件委托系统 ====================
+// 使用事件委托优化性能，避免在每次渲染时重复绑定事件
+
+/**
+ * 初始化侧边栏事件委托
+ * 处理文件夹点击、展开/折叠、右键菜单
+ */
+function initSidebarDelegation() {
+  const groupsList = document.getElementById('groupsList');
+  if (!groupsList) return;
+  
+  // 点击事件委托
+  groupsList.addEventListener('click', (e) => {
+    const item = e.target.closest('.group-item');
+    if (!item) return;
+    
+    const folderId = item.dataset.folderId;
+    
+    // 展开/折叠图标点击
+    if (e.target.closest('.folder-expand-icon:not(.empty)')) {
+      e.stopPropagation();
+      toggleFolderExpand(folderId);
+      return;
+    }
+    
+    // 文件夹选择
+    selectFolder(folderId);
+  });
+  
+  // 右键菜单委托
+  groupsList.addEventListener('contextmenu', (e) => {
+    const item = e.target.closest('.group-item');
+    if (!item) return;
+    
+    e.preventDefault();
+    showContextMenu(e.pageX, e.pageY, item.dataset.folderId);
+  });
+  
+  // 鼠标悬停 tooltip 委托
+  groupsList.addEventListener('mouseenter', (e) => {
+    const item = e.target.closest('.group-item');
+    if (!item) return;
+    
+    const nameElement = item.querySelector('.group-name');
+    if (nameElement && nameElement.scrollWidth > nameElement.clientWidth) {
+      showTooltip(nameElement.textContent, item.getBoundingClientRect());
+    }
+  }, true);
+  
+  groupsList.addEventListener('mouseleave', (e) => {
+    if (e.target.closest('.group-item')) {
+      hideTooltip();
+    }
+  }, true);
+  
+  // 拖拽事件委托 - dragstart
+  groupsList.addEventListener('dragstart', async (e) => {
+    const item = e.target.closest('.group-item');
+    if (!item) return;
+    
+    const folderId = item.dataset.folderId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('folderId', folderId);
+    logger.debug(`开始拖拽文件夹: ${folderId}`);
+    
+    try {
+      const [folder] = await chrome.bookmarks.get(folderId);
+      currentDragInfo = { type: 'folder', id: folderId, parentId: folder.parentId };
+    } catch (error) {
+      logger.error('获取文件夹信息失败', error);
+      currentDragInfo = { type: 'folder', id: folderId };
+    }
+    item.classList.add('dragging');
+  });
+  
+  groupsList.addEventListener('dragend', (e) => {
+    const item = e.target.closest('.group-item');
+    if (item) item.classList.remove('dragging');
+    currentDragInfo = null;
+  });
+  
+  // 拖拽事件委托 - dragover/dragleave/drop
+  groupsList.addEventListener('dragover', (e) => {
+    const item = e.target.closest('.group-item[data-droppable="true"]');
+    if (!item) return;
+    
+    e.preventDefault();
+    item.dataset.isDraggingOver = 'true';
+    
+    const rect = item.getBoundingClientRect();
+    const mouseY = e.clientY - rect.top;
+    const height = rect.height;
+    const threshold = Math.min(height * 0.3, 15);
+    
+    let newMode = '';
+    let canDrop = true;
+    
+    if (mouseY < threshold) {
+      newMode = 'before';
+    } else if (mouseY > height - threshold) {
+      newMode = 'after';
+    } else {
+      newMode = 'into';
+    }
+    
+    // 检查是否允许拖放到顶级位置
+    if ((newMode === 'before' || newMode === 'after') && currentDragInfo) {
+      const targetLevel = parseInt(item.dataset.level || '0');
+      if (targetLevel === 0 && currentDragInfo.type === 'folder' && currentDragInfo.parentId !== '0') {
+        canDrop = false;
+        newMode = '';
+      }
+    }
+    
+    if (item.dataset.dropMode !== newMode) {
+      item.classList.remove('drag-over', 'drag-before', 'drag-after');
+      item.dataset.dropMode = newMode;
+      if (newMode === 'before') item.classList.add('drag-before');
+      else if (newMode === 'after') item.classList.add('drag-after');
+      else if (newMode === 'into') item.classList.add('drag-over');
+    }
+    
+    e.dataTransfer.dropEffect = canDrop ? 'move' : 'none';
+  });
+  
+  groupsList.addEventListener('dragleave', (e) => {
+    const item = e.target.closest('.group-item');
+    if (!item) return;
+    
+    const relatedTarget = e.relatedTarget;
+    if (!relatedTarget || !item.contains(relatedTarget)) {
+      delete item.dataset.isDraggingOver;
+      setTimeout(() => {
+        if (!item.dataset.isDraggingOver) {
+          item.classList.remove('drag-over', 'drag-before', 'drag-after');
+          delete item.dataset.dropMode;
+        }
+      }, 20);
+    }
+  });
+  
+  groupsList.addEventListener('drop', async (e) => {
+    const item = e.target.closest('.group-item[data-droppable="true"]');
+    if (!item) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    item.classList.remove('drag-over', 'drag-before', 'drag-after');
+    
+    const dropMode = item.dataset.dropMode;
+    delete item.dataset.dropMode;
+    
+    const targetId = item.dataset.folderId;
+    await handleDrop(e.dataTransfer, targetId, dropMode, 'sidebar');
+  });
+}
+
+/**
+ * 初始化书签网格事件委托
+ * 处理书签点击、编辑、删除、拖拽
+ */
+function initBookmarksGridDelegation() {
+  const bookmarksGrid = document.getElementById('bookmarksGrid');
+  if (!bookmarksGrid) return;
+  
+  // 点击事件委托
+  bookmarksGrid.addEventListener('click', async (e) => {
+    // 处理文件夹卡片点击
+    const folderCard = e.target.closest('.folder-card');
+    if (folderCard && !e.target.closest('.folder-actions')) {
+      // 检查是否点击删除按钮
+      if (e.target.closest('.delete-folder')) {
+        e.stopPropagation();
+        await deleteFolder(folderCard.dataset.folderId);
+        return;
+      }
+      selectFolder(folderCard.dataset.folderId);
+      return;
+    }
+    
+    // 处理书签卡片点击
+    const bookmarkCard = e.target.closest('.bookmark-card');
+    if (!bookmarkCard) return;
+    
+    // 操作按钮点击
+    if (e.target.closest('.edit-bookmark')) {
+      e.stopPropagation();
+      openEditBookmarkModal(bookmarkCard.dataset.bookmarkId);
+      return;
+    }
+    
+    if (e.target.closest('.delete-bookmark')) {
+      e.stopPropagation();
+      await deleteBookmark(bookmarkCard.dataset.bookmarkId);
+      return;
+    }
+    
+    // 跳过操作按钮区域
+    if (e.target.closest('.bookmark-actions')) return;
+    
+    const bookmarkId = bookmarkCard.dataset.bookmarkId;
+    
+    // 多选逻辑
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      toggleBookmarkSelection(bookmarkId);
+    } else if (e.shiftKey) {
+      e.preventDefault();
+      selectBookmarkRange(bookmarkId);
+    } else {
+      if (selectedBookmarks.size === 0) {
+        window.open(bookmarkCard.dataset.url, '_blank');
+      } else {
+        clearSelection();
+        toggleBookmarkSelection(bookmarkId);
+      }
+    }
+  });
+  
+  // 图片错误事件委托
+  bookmarksGrid.addEventListener('error', (e) => {
+    if (e.target.tagName !== 'IMG' || e.target.dataset.errorHandled) return;
+    e.target.dataset.errorHandled = 'true';
+    const url = e.target.dataset.bookmarkUrl;
+    if (url) handleFaviconError(e.target, url);
+  }, true);
+  
+  // Tooltip 委托
+  bookmarksGrid.addEventListener('mouseenter', (e) => {
+    const card = e.target.closest('.bookmark-card');
+    if (card) {
+      const titleEl = card.querySelector('.bookmark-card-title');
+      if (titleEl && titleEl.scrollWidth > titleEl.clientWidth) {
+        showTooltip(titleEl.textContent, card.getBoundingClientRect());
+      }
+    }
+  }, true);
+  
+  bookmarksGrid.addEventListener('mouseleave', (e) => {
+    if (e.target.closest('.bookmark-card')) {
+      hideTooltip();
+    }
+  }, true);
+  
+  // 拖拽事件委托 - dragstart
+  bookmarksGrid.addEventListener('dragstart', async (e) => {
+    const card = e.target.closest('[draggable="true"]');
+    if (!card) return;
+    
+    const bookmarkId = card.dataset.bookmarkId;
+    const folderId = card.dataset.folderId;
+    
+    e.dataTransfer.effectAllowed = 'move';
+    
+    if (bookmarkId) {
+      // 批量拖拽
+      if (selectedBookmarks.size > 0 && selectedBookmarks.has(bookmarkId)) {
+        const bookmarkIds = Array.from(selectedBookmarks);
+        e.dataTransfer.setData('bookmarkIds', JSON.stringify(bookmarkIds));
+        e.dataTransfer.setData('isBatch', 'true');
+        document.querySelectorAll('.bookmark-card.selected').forEach(c => c.classList.add('dragging'));
+        
+        try {
+          const [item] = await chrome.bookmarks.get(bookmarkId);
+          currentDragInfo = { type: 'bookmark', id: bookmarkId, parentId: item.parentId, isBatch: true, count: bookmarkIds.length };
+        } catch (error) {
+          currentDragInfo = { type: 'bookmark', id: bookmarkId, isBatch: true, count: bookmarkIds.length };
+        }
+      } else {
+        e.dataTransfer.setData('bookmarkId', bookmarkId);
+        try {
+          const [item] = await chrome.bookmarks.get(bookmarkId);
+          currentDragInfo = { type: 'bookmark', id: bookmarkId, parentId: item.parentId };
+        } catch (error) {
+          currentDragInfo = { type: 'bookmark', id: bookmarkId };
+        }
+        card.classList.add('dragging');
+      }
+    } else if (folderId) {
+      e.dataTransfer.setData('folderId', folderId);
+      try {
+        const [item] = await chrome.bookmarks.get(folderId);
+        currentDragInfo = { type: 'folder', id: folderId, parentId: item.parentId };
+      } catch (error) {
+        currentDragInfo = { type: 'folder', id: folderId };
+      }
+      card.classList.add('dragging');
+    }
+  });
+  
+  bookmarksGrid.addEventListener('dragend', () => {
+    document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+    currentDragInfo = null;
+  });
+  
+  // 拖拽放置事件委托
+  bookmarksGrid.addEventListener('dragover', (e) => {
+    const card = e.target.closest('.folder-card[data-droppable="true"], .bookmark-card[draggable="true"]');
+    if (!card) return;
+    
+    e.preventDefault();
+    card.dataset.isDraggingOver = 'true';
+    
+    const isFolder = card.classList.contains('folder-card');
+    const rect = card.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const width = rect.width;
+    
+    let newMode;
+    if (isFolder) {
+      const threshold = 50;
+      if (mouseX < threshold) newMode = 'before';
+      else if (mouseX > width - threshold) newMode = 'after';
+      else newMode = 'into';
+    } else {
+      const center = width / 2;
+      const currentMode = card.dataset.dropMode;
+      const hysteresis = width * 0.1;
+      
+      if (currentMode === 'before') {
+        newMode = mouseX > center + hysteresis ? 'after' : 'before';
+      } else if (currentMode === 'after') {
+        newMode = mouseX < center - hysteresis ? 'before' : 'after';
+      } else {
+        newMode = mouseX < center ? 'before' : 'after';
+      }
+    }
+    
+    if (card.dataset.dropMode !== newMode) {
+      card.classList.remove('drag-over', 'drag-before', 'drag-after');
+      card.dataset.dropMode = newMode;
+      if (newMode === 'before') card.classList.add('drag-before');
+      else if (newMode === 'after') card.classList.add('drag-after');
+      else if (newMode === 'into') card.classList.add('drag-over');
+    }
+    
+    e.dataTransfer.dropEffect = 'move';
+  });
+  
+  bookmarksGrid.addEventListener('dragleave', (e) => {
+    const card = e.target.closest('.folder-card, .bookmark-card');
+    if (!card) return;
+    
+    const relatedTarget = e.relatedTarget;
+    if (!relatedTarget || !card.contains(relatedTarget)) {
+      delete card.dataset.isDraggingOver;
+      setTimeout(() => {
+        if (!card.dataset.isDraggingOver) {
+          card.classList.remove('drag-over', 'drag-before', 'drag-after');
+          delete card.dataset.dropMode;
+        }
+      }, 20);
+    }
+  });
+  
+  bookmarksGrid.addEventListener('drop', async (e) => {
+    const card = e.target.closest('.folder-card[data-droppable="true"], .bookmark-card[draggable="true"]');
+    if (!card) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    card.classList.remove('drag-over', 'drag-before', 'drag-after');
+    
+    const dropMode = card.dataset.dropMode;
+    delete card.dataset.dropMode;
+    
+    const targetId = card.dataset.folderId || card.dataset.bookmarkId;
+    const targetType = card.classList.contains('folder-card') ? 'folder' : 'bookmark';
+    await handleDrop(e.dataTransfer, targetId, dropMode, targetType);
+  });
+}
+
+/**
+ * 统一的拖放处理函数
+ */
+async function handleDrop(dataTransfer, targetId, dropMode, targetType) {
+  const bookmarkId = dataTransfer.getData('bookmarkId');
+  const draggedFolderId = dataTransfer.getData('folderId');
+  const isBatch = dataTransfer.getData('isBatch') === 'true';
+  const bookmarkIdsStr = dataTransfer.getData('bookmarkIds');
+  
+  let draggedIds = [];
+  if (isBatch && bookmarkIdsStr) {
+    try {
+      draggedIds = JSON.parse(bookmarkIdsStr);
+    } catch (error) {
+      logger.error('解析书签ID列表失败', error);
+      return;
+    }
+  } else {
+    const draggedId = bookmarkId || draggedFolderId;
+    if (!draggedId) return;
+    draggedIds = [draggedId];
+  }
+  
+  try {
+    // 拖入文件夹模式
+    if (dropMode === 'into' && targetType !== 'bookmark') {
+      for (const draggedId of draggedIds) {
+        const [draggedItem] = await chrome.bookmarks.get(draggedId);
+        const oldParentId = draggedItem.parentId;
+        const oldIndex = draggedItem.index;
+        
+        await chrome.bookmarks.move(draggedId, { parentId: targetId });
+        
+        recordOperation({
+          type: 'move',
+          itemType: draggedItem.url ? 'bookmark' : 'folder',
+          data: { id: draggedId, oldParentId, oldIndex, newParentId: targetId }
+        });
+      }
+      showToast(isBatch ? `已移动 ${draggedIds.length} 个项目` : (draggedFolderId ? t('folderMoved') : t('bookmarkMoved')), 'success');
+    }
+    // 排序模式
+    else if (dropMode === 'before' || dropMode === 'after') {
+      if (isBatch) {
+        showToast('批量拖动请拖到文件夹上', 'warning');
+        return;
+      }
+      
+      const draggedId = draggedIds[0];
+      const [targetItem] = await chrome.bookmarks.get(targetId);
+      const [draggedItem] = await chrome.bookmarks.get(draggedId);
+      
+      // 检查是否允许移动到顶级位置
+      if (targetItem.parentId === '0' && !draggedItem.url && draggedItem.parentId !== '0') {
+        await showAlert('Chrome 不支持将子文件夹移动到顶级位置', '无法移动');
+        return;
+      }
+      
+      const [parentFolder] = await chrome.bookmarks.getSubTree(targetItem.parentId);
+      let targetIndex = parentFolder.children.findIndex(item => item.id === targetId);
+      
+      if (dropMode === 'after') targetIndex++;
+      if (draggedItem.parentId === targetItem.parentId) {
+        const currentIndex = parentFolder.children.findIndex(item => item.id === draggedId);
+        if (currentIndex < targetIndex) targetIndex--;
+      }
+      
+      const oldParentId = draggedItem.parentId;
+      // 确保获取正确的原始索引
+      let oldIndex = draggedItem.index;
+      if (oldIndex === undefined) {
+        // 如果 index 不存在，从父文件夹中查找
+        oldIndex = parentFolder.children.findIndex(item => item.id === draggedId);
+        logger.warn(`draggedItem.index 不存在，从父文件夹查找得到: ${oldIndex}`);
+      }
+      
+      logger.debug(`排序前状态: id=${draggedId}, oldParentId=${oldParentId}, oldIndex=${oldIndex}`);
+      logger.debug(`排序目标: targetParentId=${targetItem.parentId}, targetIndex=${targetIndex}`);
+      
+      await chrome.bookmarks.move(draggedId, { parentId: targetItem.parentId, index: targetIndex });
+      
+      // 获取移动后的实际位置
+      const [movedItem] = await chrome.bookmarks.get(draggedId);
+      logger.debug(`排序后状态: newIndex=${movedItem.index}`);
+      
+      recordOperation({
+        type: 'move',
+        itemType: draggedItem.url ? 'bookmark' : 'folder',
+        data: { id: draggedId, oldParentId, oldIndex, newParentId: targetItem.parentId, newIndex: movedItem.index }
+      });
+      
+      logger.debug(`记录撤销操作: oldIndex=${oldIndex}, newIndex=${movedItem.index}`);
+      
+      showToast(draggedItem.url ? t('bookmarkMoved') : t('folderMoved'), 'success');
+    }
+    
+    await loadBookmarks();
+    selectFolder(currentFolderId, false);
+    renderFolders();
+  } catch (error) {
+    logger.error(t('moveBookmarkError'), error);
+    await showAlert(t('moveBookmarkError'), t('error'));
+  }
+}
+
 // ==================== 多语言系统 ====================
 let currentLang = localStorage.getItem('bookmarkManagerLang') || 'zh-CN';
 
@@ -99,6 +576,7 @@ const i18n = {
     deleteFolder: '删除文件夹',
     renameFolder: '重命名',
     renameFolderTitle: '重命名文件夹',
+    cannotRenameSystemFolder: '系统文件夹不能重命名',
     createSubfolder: '创建子文件夹',
     subfolder: '子文件夹',
     topLevelFolders: '顶级文件夹',
@@ -111,6 +589,9 @@ const i18n = {
     bookmarkMoved: '书签已移动',
     folderDeleted: '文件夹已删除，书签已移动到上一级',
     folderMoved: '文件夹已移动',
+    folderRenamed: '文件夹已重命名',
+    folderNotFound: '文件夹不存在',
+    renameFolderError: '重命名文件夹失败',
     // 撤销功能
     undo: '撤销',
     undoSuccess: '已撤销',
@@ -195,6 +676,7 @@ const i18n = {
     deleteFolder: 'Delete Folder',
     renameFolder: 'Rename',
     renameFolderTitle: 'Rename Folder',
+    cannotRenameSystemFolder: 'System folders cannot be renamed',
     createSubfolder: 'Create Subfolder',
     subfolder: 'Subfolder',
     topLevelFolders: 'Top Level Folders',
@@ -207,6 +689,9 @@ const i18n = {
     bookmarkMoved: 'Bookmark moved',
     folderDeleted: 'Folder deleted, bookmarks moved to parent',
     folderMoved: 'Folder moved',
+    folderRenamed: 'Folder renamed',
+    folderNotFound: 'Folder not found',
+    renameFolderError: 'Failed to rename folder',
     // Undo function
     undo: 'Undo',
     undoSuccess: 'Undone',
@@ -378,7 +863,7 @@ async function clearFaviconCache() {
   }
 }
 
-// ====================时间和问候语 ====================
+// ==================== 应用初始化 ====================
 document.addEventListener('DOMContentLoaded', async () => {
   await loadBookmarks();
   initTooltip(); // 初始化自定义 tooltip
@@ -389,6 +874,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateGreeting();
   applyTranslations(); // 应用翻译
   setupEventListeners();
+  
+  // 初始化事件委托系统
+  initSidebarDelegation();
+  initBookmarksGridDelegation();
+  
   renderFolders();
   
   // 从 URL hash 恢复状态，或默认选中第一个文件夹
@@ -397,6 +887,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     selectFolder(hash, false); // false = 不更新 hash（已经在 URL 中）
   } else if (topLevelFolders.length > 0) {
     selectFolder(topLevelFolders[0].id);
+  }
+  
+  // 恢复搜索状态（如果有）
+  const savedSearch = sessionStorage.getItem('bookmarkSearchQuery');
+  if (savedSearch) {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.value = savedSearch;
+      // 触发搜索
+      const results = searchInTree(bookmarkTree, savedSearch.toLowerCase());
+      renderSearchResults(results);
+    }
   }
   
   // 监听 URL hash 变化（支持浏览器前进/后退）
@@ -650,7 +1152,8 @@ function renderFolders() {
       <div class="group-item ${isActive} ${hasExpandedChildren ? 'has-expanded-children' : ''}" 
            data-folder-id="${folder.id}"
            data-droppable="true"
-           data-level="${level}">
+           data-level="${level}"
+           draggable="true">
         ${expandIcon}
         <span class="group-icon">${folderIcon}</span>
         <div class="group-info">
@@ -678,58 +1181,7 @@ function renderFolders() {
   html += topLevelFolders.map(folder => renderFolderTree(folder)).join('');
   
   groupsList.innerHTML = html;
-  
-  // 绑定文件夹点击事件
-  document.querySelectorAll('.group-item').forEach(item => {
-    const folderId = item.dataset.folderId;
-    
-    // 展开/折叠图标点击事件
-    const expandIcon = item.querySelector('.folder-expand-icon');
-    if (expandIcon && !expandIcon.classList.contains('empty')) {
-      expandIcon.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleFolderExpand(folderId);
-      });
-    }
-    
-    // 文件夹名称点击事件
-    item.addEventListener('click', (e) => {
-      // 如果点击的是展开图标，不触发文件夹选择
-      if (e.target.closest('.folder-expand-icon')) return;
-      selectFolder(folderId);
-    });
-    
-    // 右键菜单
-    item.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      showContextMenu(e.pageX, e.pageY, folderId);
-    });
-    
-    // 设置 tooltip 功能
-    const nameElement = item.querySelector('.group-name');
-    if (nameElement) {
-      // 检查文本是否被截断
-      const isTruncated = nameElement.scrollWidth > nameElement.clientWidth;
-      
-      if (isTruncated) {
-        item.addEventListener('mouseenter', () => {
-          const rect = item.getBoundingClientRect();
-          showTooltip(nameElement.textContent, rect);
-        });
-        
-        item.addEventListener('mouseleave', () => {
-          hideTooltip();
-        });
-      }
-    }
-    
-    // 绑定拖放事件（支持拖入和拖拽排序）
-    setupDropZone(item);
-    
-    // 添加 draggable 属性以支持拖拽
-    item.setAttribute('draggable', 'true');
-    setupDraggable(item);
-  });
+  // 注意：事件绑定已移至 initSidebarDelegation() 使用事件委托处理
 }
 
 // 切换文件夹展开/折叠状态
@@ -844,10 +1296,10 @@ function renderContent() {
   // 计算当前文件夹的层级深度
   function getFolderLevel(folderId) {
     let level = 0;
-    let current = findFolderById(folderId);
+    let current = getFolderById(folderId);
     while (current && current.parentId && current.parentId !== '0') {
       level++;
-      current = findFolderById(current.parentId);
+      current = getFolderById(current.parentId);
     }
     return level;
   }
@@ -876,104 +1328,9 @@ function renderContent() {
   
   logger.debug(`当前页面显示内容，当前文件夹层级: ${currentLevel}`);
   
-  // 绑定文件夹卡片事件（如果有显示文件夹卡片）
-  document.querySelectorAll('.folder-card').forEach(card => {
-    const folderId = card.dataset.folderId;
-    card.addEventListener('click', (e) => {
-      if (!e.target.closest('.folder-actions')) {
-        selectFolder(folderId);
-      }
-    });
-    
-    // 绑定删除按钮（如果是编辑模式）
-    const deleteBtn = card.querySelector('.delete-folder');
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await deleteFolder(folderId);
-      });
-    }
-    
-    // 绑定拖放事件，使文件夹卡片可以接收拖拽的书签
-    setupDraggable(card);
-    setupDropZone(card);
-  });
-  
-  // 先绑定图标错误处理（简单降级到 emoji）
-  document.querySelectorAll('.bookmark-card img').forEach(img => {
-    img.addEventListener('error', (e) => {
-      // 防止重复处理（重定向循环等情况）
-      if (img.dataset.errorHandled) return;
-      img.dataset.errorHandled = 'true';
-      
-      const url = img.dataset.bookmarkUrl;
-      if (url) {
-        handleFaviconError(img, url);
-      }
-    }, { once: true }); // 使用 once 选项确保只触发一次
-  });
-  
   // 使用 Intersection Observer 实现懒加载：只加载可见书签的 favicon
   setupLazyLoadFavicons();
-  
-  // 绑定书签卡片拖拽和排序事件
-  document.querySelectorAll('.bookmark-card[draggable="true"]').forEach(card => {
-    setupDraggable(card);
-    setupDropZone(card); // 添加放置区域支持排序
-    setupTooltip(card);
-  });
-  
-  // 绑定书签卡片点击事件（多选功能）
-  document.querySelectorAll('.bookmark-card').forEach(card => {
-    card.addEventListener('click', (e) => {
-      // 如果点击的是操作按钮，不处理选择逻辑
-      if (e.target.closest('.bookmark-actions')) {
-        return;
-      }
-      
-      const bookmarkId = card.dataset.bookmarkId;
-      
-      // Ctrl/Cmd + 点击 = 多选/取消选择
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        toggleBookmarkSelection(bookmarkId);
-      }
-      // Shift + 点击 = 连续选择
-      else if (e.shiftKey) {
-        e.preventDefault();
-        selectBookmarkRange(bookmarkId);
-      }
-      // 普通点击 = 打开链接（如果没有选中项）或选择单个
-      else {
-        if (selectedBookmarks.size === 0) {
-          // 没有选中项，直接打开链接
-          const url = card.dataset.url;
-          window.open(url, '_blank');
-        } else {
-          // 有选中项，清除所有选择并选中当前项
-          clearSelection();
-          toggleBookmarkSelection(bookmarkId);
-        }
-      }
-    });
-  });
-  
-  // 绑定书签操作按钮
-  document.querySelectorAll('.edit-bookmark').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const bookmarkId = btn.closest('.bookmark-card').dataset.bookmarkId;
-      openEditBookmarkModal(bookmarkId);
-    });
-  });
-  
-  document.querySelectorAll('.delete-bookmark').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const bookmarkId = btn.closest('.bookmark-card').dataset.bookmarkId;
-      await deleteBookmark(bookmarkId);
-    });
-  });
+  // 注意：事件绑定已移至 initBookmarksGridDelegation() 使用事件委托处理
 }
 
 // 创建文件夹卡片
@@ -1323,6 +1680,13 @@ function getDisplayUrl(url) {
 function handleSearch(e) {
   const query = e.target.value.toLowerCase().trim();
   
+  // 保存搜索状态到 sessionStorage
+  if (query) {
+    sessionStorage.setItem('bookmarkSearchQuery', query);
+  } else {
+    sessionStorage.removeItem('bookmarkSearchQuery');
+  }
+  
   if (!query) {
     renderContent();
     return;
@@ -1371,124 +1735,9 @@ function renderSearchResults(bookmarks) {
   const html = bookmarks.map(bookmark => createBookmarkCard(bookmark)).join('');
   bookmarksGrid.innerHTML = html;
   
-  // 先绑定图标错误处理（简单降级到 emoji）
-  document.querySelectorAll('.bookmark-card img').forEach(img => {
-    img.addEventListener('error', (e) => {
-      // 防止重复处理（重定向循环等情况）
-      if (img.dataset.errorHandled) return;
-      img.dataset.errorHandled = 'true';
-      
-      const url = img.dataset.bookmarkUrl;
-      if (url) {
-        handleFaviconError(img, url);
-      }
-    }, { once: true }); // 使用 once 选项确保只触发一次
-  });
-  
-  // 异步加载 favicon：优先使用 Chrome 缓存，否则降级到 favicon.ico
-  const imgElements = document.querySelectorAll('.bookmark-card img');
-  
-  // 使用 Promise.all 并发处理所有图片，而不是 forEach(async)
-  const promises = Array.from(imgElements).map(async (img) => {
-    const url = img.dataset.bookmarkUrl;
-    if (!url) return;
-    
-    try {
-      const cachedFavicon = await getCachedFavicon(url);
-      if (cachedFavicon) {
-        // 获取成功，从失败列表中移除
-        try {
-          const hostname = new URL(url).hostname;
-          if (failedFaviconHosts.has(hostname)) {
-            failedFaviconHosts.delete(hostname);
-            logger.debug(`${hostname} 获取成功，从失败列表中移除`);
-          }
-        } catch (e) {
-          // 忽略 URL 解析错误
-        }
-        
-        img.src = cachedFavicon;
-        img.style.opacity = '0';
-        setTimeout(() => {
-          img.style.opacity = '1';
-        }, 50);
-      } else {
-        // 没有缓存，检查是否已知失败
-        try {
-          const urlObj = new URL(url);
-          const hostname = urlObj.hostname;
-          if (!failedFaviconHosts.has(hostname)) {
-            // 尝试降级到网站的 favicon.ico
-            img.src = getFavicon(url);
-            img.style.opacity = '0';
-            setTimeout(() => {
-              img.style.opacity = '1';
-            }, 50);
-          }
-          // 如果已知失败，保持默认图标
-        } catch (e) {
-          // URL 解析失败，保持默认图标
-        }
-      }
-    } catch (error) {
-      logger.debug(`加载 favicon 失败: ${url}`, error);
-    }
-  });
-  
-  // 等待所有 favicon 加载完成（可选，如果不需要等待可以移除）
-  // await Promise.all(promises);
-  
-  // 绑定事件
-  document.querySelectorAll('.bookmark-card').forEach(card => {
-    card.addEventListener('click', (e) => {
-      // 如果点击的是操作按钮，不处理选择逻辑
-      if (e.target.closest('.bookmark-actions')) {
-        return;
-      }
-      
-      const bookmarkId = card.dataset.bookmarkId;
-      
-      // Ctrl/Cmd + 点击 = 多选/取消选择
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        toggleBookmarkSelection(bookmarkId);
-      }
-      // Shift + 点击 = 连续选择
-      else if (e.shiftKey) {
-        e.preventDefault();
-        selectBookmarkRange(bookmarkId);
-      }
-      // 普通点击 = 打开链接（如果没有选中项）或选择单个
-      else {
-        if (selectedBookmarks.size === 0) {
-          // 没有选中项，直接打开链接
-          const url = card.dataset.url;
-          window.open(url, '_blank');
-        } else {
-          // 有选中项，清除所有选择并选中当前项
-          clearSelection();
-          toggleBookmarkSelection(bookmarkId);
-        }
-      }
-    });
-    setupTooltip(card);
-  });
-  
-  document.querySelectorAll('.edit-bookmark').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const bookmarkId = btn.closest('.bookmark-card').dataset.bookmarkId;
-      openEditBookmarkModal(bookmarkId);
-    });
-  });
-  
-  document.querySelectorAll('.delete-bookmark').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const bookmarkId = btn.closest('.bookmark-card').dataset.bookmarkId;
-      await deleteBookmark(bookmarkId);
-    });
-  });
+  // 使用懒加载处理 favicon
+  setupLazyLoadFavicons();
+  // 注意：事件绑定已移至 initBookmarksGridDelegation() 使用事件委托处理
 }
 
 // ==================== 多选功能 ====================
@@ -1664,7 +1913,7 @@ function updateSubfolderSelect() {
   }
   
   // 查找选中的文件夹
-  const parentFolder = findFolderById(parentFolderId);
+  const parentFolder = getFolderById(parentFolderId);
   
   if (!parentFolder || !parentFolder.children) {
     subfolderGroup.style.display = 'none';
@@ -1733,23 +1982,6 @@ function updateSubfolderSelect() {
 }
 
 // 已移除滚轮事件处理函数（使用列表框模式不再需要）
-
-function findFolderById(folderId, node = bookmarkTree) {
-  if (!node) return null;
-  
-  if (node.id === folderId) {
-    return node;
-  }
-  
-  if (node.children) {
-    for (const child of node.children) {
-      const result = findFolderById(folderId, child);
-      if (result) return result;
-    }
-  }
-  
-  return null;
-}
 
 async function saveBookmark() {
   const title = document.getElementById('bookmarkTitle').value.trim();
@@ -1914,7 +2146,7 @@ async function deleteFolder(folderId) {
   
   try {
     // 获取要删除的文件夹
-    const folder = findFolderById(folderId);
+    const folder = getFolderById(folderId);
     if (!folder || !folder.parentId) {
       await showAlert('无法删除系统文件夹', t('error'));
       return;
@@ -2017,13 +2249,23 @@ function showContextMenu(x, y, folderId) {
   const folder = topLevelFolders.find(f => f.id === folderId);
   const isSystemFolder = folder && folder.displayNameKey;
   
-  // 如果是系统文件夹，禁用删除选项
+  // 如果是系统文件夹，禁用删除和重命名选项
   const deleteItem = contextMenu.querySelector('[data-action="delete"]');
+  const renameItem = contextMenu.querySelector('[data-action="rename"]');
+  
   if (deleteItem) {
     if (isSystemFolder) {
       deleteItem.classList.add('disabled');
     } else {
       deleteItem.classList.remove('disabled');
+    }
+  }
+  
+  if (renameItem) {
+    if (isSystemFolder) {
+      renameItem.classList.add('disabled');
+    } else {
+      renameItem.classList.remove('disabled');
     }
   }
   
@@ -2057,9 +2299,56 @@ async function handleContextMenuAction(action, folderId) {
       await deleteFolder(folderId);
       break;
     case 'rename':
-      // TODO: 实现重命名功能
-      await showAlert('重命名功能即将推出', '提示');
+      await renameFolder(folderId);
       break;
+  }
+}
+
+// 重命名文件夹
+async function renameFolder(folderId) {
+  try {
+    const [folder] = await chrome.bookmarks.get(folderId);
+    if (!folder) {
+      await showAlert(t('folderNotFound'), t('error'));
+      return;
+    }
+    
+    // 检查是否是顶级文件夹（系统文件夹不允许重命名）
+    if (folder.parentId === '0') {
+      await showAlert(t('cannotRenameSystemFolder'), t('error'));
+      return;
+    }
+    
+    const newName = await showPrompt(folder.title, t('renameFolderTitle'));
+    
+    if (!newName || !newName.trim() || newName.trim() === folder.title) {
+      return; // 用户取消或名称未变
+    }
+    
+    const oldTitle = folder.title;
+    await chrome.bookmarks.update(folderId, { title: newName.trim() });
+    
+    // 记录操作以支持撤销
+    recordOperation({
+      type: 'update',
+      itemType: 'folder',
+      data: {
+        id: folderId,
+        oldTitle: oldTitle,
+        newTitle: newName.trim()
+      }
+    });
+    
+    showToast(t('folderRenamed'), 'success');
+    await loadBookmarks();
+    renderFolders();
+    // 如果当前选中的是被重命名的文件夹，更新标题
+    if (currentFolderId === folderId) {
+      updateFolderTitle();
+    }
+  } catch (error) {
+    logger.error(t('renameFolderError'), error);
+    await showAlert(t('renameFolderError'), t('error'));
   }
 }
 
@@ -2256,398 +2545,10 @@ function initSidebarResize() {
 }
 
 // ==================== 拖拽功能 ====================
-function setupDraggable(element) {
-  element.addEventListener('dragstart', async (e) => {
-    const bookmarkId = element.dataset.bookmarkId;
-    const folderId = element.dataset.folderId;
-    
-    e.dataTransfer.effectAllowed = 'move';
-    
-    // 记录拖拽信息（包括 parentId 用于判断是否允许拖拽）
-    if (bookmarkId) {
-      // 检查是否有选中的书签
-      if (selectedBookmarks.size > 0 && selectedBookmarks.has(bookmarkId)) {
-        // 拖动多个选中的书签
-        const bookmarkIds = Array.from(selectedBookmarks);
-        e.dataTransfer.setData('bookmarkIds', JSON.stringify(bookmarkIds));
-        e.dataTransfer.setData('isBatch', 'true');
-        logger.debug(`开始拖拽 ${bookmarkIds.length} 个书签`);
-        
-        // 为所有选中的卡片添加拖动样式
-        document.querySelectorAll('.bookmark-card.selected').forEach(card => {
-          card.classList.add('dragging');
-        });
-        
-        try {
-          const [item] = await chrome.bookmarks.get(bookmarkId);
-          currentDragInfo = { type: 'bookmark', id: bookmarkId, parentId: item.parentId, isBatch: true, count: bookmarkIds.length };
-        } catch (error) {
-          logger.error('获取书签信息失败', error);
-          currentDragInfo = { type: 'bookmark', id: bookmarkId, isBatch: true, count: bookmarkIds.length };
-        }
-      } else {
-        // 拖动单个书签
-        e.dataTransfer.setData('bookmarkId', bookmarkId);
-        logger.debug(`开始拖拽书签: ${bookmarkId}`);
-        try {
-          const [item] = await chrome.bookmarks.get(bookmarkId);
-          currentDragInfo = { type: 'bookmark', id: bookmarkId, parentId: item.parentId };
-        } catch (error) {
-          logger.error('获取书签信息失败', error);
-          currentDragInfo = { type: 'bookmark', id: bookmarkId };
-        }
-        element.classList.add('dragging');
-      }
-    } else if (folderId) {
-      e.dataTransfer.setData('folderId', folderId);
-      logger.debug(`开始拖拽文件夹: ${folderId}`);
-      try {
-        const [item] = await chrome.bookmarks.get(folderId);
-        currentDragInfo = { type: 'folder', id: folderId, parentId: item.parentId };
-      } catch (error) {
-        logger.error('获取文件夹信息失败', error);
-        currentDragInfo = { type: 'folder', id: folderId };
-      }
-      element.classList.add('dragging');
-    }
-  });
-  
-  element.addEventListener('dragend', (e) => {
-    element.classList.remove('dragging');
-    // 清除所有选中卡片的拖动样式
-    document.querySelectorAll('.bookmark-card.dragging').forEach(card => {
-      card.classList.remove('dragging');
-    });
-    currentDragInfo = null; // 清除拖拽信息
-  });
-}
-
-function setupDropZone(element) {
-  const isFolder = element.classList.contains('folder-card');
-  const isBookmark = element.classList.contains('bookmark-card');
-  const isSidebarItem = element.classList.contains('group-item');
-  
-  logger.debug(`设置 drop zone: ${isFolder ? '文件夹' : isBookmark ? '书签' : isSidebarItem ? '侧边栏项' : '未知'}`);
-  
-  element.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    
-    // 标记正在 dragover
-    element.dataset.isDraggingOver = 'true';
-    
-    let newMode = '';
-    let canDrop = true; // 标记是否允许放置
-    
-    // 侧边栏项目支持排序和拖入
-    if (isSidebarItem) {
-      const rect = element.getBoundingClientRect();
-      const mouseY = e.clientY - rect.top;
-      const height = rect.height;
-      const threshold = Math.min(height * 0.3, 15); // 使用高度的30%或15px作为阈值
-      
-      // 根据鼠标在垂直方向的位置决定模式
-      if (mouseY < threshold) {
-        newMode = 'before';
-      } else if (mouseY > height - threshold) {
-        newMode = 'after';
-      } else {
-        newMode = 'into';
-      }
-      
-      // 检查是否试图将子文件夹拖到顶级位置
-      if ((newMode === 'before' || newMode === 'after') && currentDragInfo) {
-        const targetLevel = parseInt(element.dataset.level || '0');
-        const isDraggingFolder = currentDragInfo.type === 'folder';
-        const isDraggingTopLevel = currentDragInfo.parentId === '0';
-        
-        // 如果目标是顶级（level=0），且拖动的是非顶级文件夹，则不允许
-        if (targetLevel === 0 && isDraggingFolder && !isDraggingTopLevel) {
-          canDrop = false;
-          newMode = ''; // 不显示任何拖放指示器
-        }
-      }
-    } else if (isFolder) {
-      // 对于文件夹：根据鼠标位置决定是"进入文件夹"还是"排序"
-      const rect = element.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const width = rect.width;
-      const threshold = 50; // 固定像素阈值，左右 50px 区域用于排序
-      
-      const currentMode = element.dataset.dropMode;
-      
-      // 使用严格的边界判断，避免抖动
-      if (mouseX < threshold) {
-        newMode = 'before';
-      } else if (mouseX > width - threshold) {
-        newMode = 'after';
-      } else {
-        newMode = 'into';
-      }
-    } else if (isBookmark) {
-      // 对于书签：根据鼠标位置决定插入到左边还是右边
-      const rect = element.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const width = rect.width;
-      const center = width / 2;
-      
-      const currentMode = element.dataset.dropMode;
-      
-      // 使用滞后（hysteresis）逻辑，需要移动更远距离才能切换
-      if (currentMode === 'before') {
-        // 当前是 before，需要移动到右侧 30% 才切换到 after
-        newMode = mouseX > center + width * 0.1 ? 'after' : 'before';
-      } else if (currentMode === 'after') {
-        // 当前是 after，需要移动到左侧 30% 才切换到 before
-        newMode = mouseX < center - width * 0.1 ? 'before' : 'after';
-      } else {
-        // 首次进入，根据位置决定
-        newMode = mouseX < center ? 'before' : 'after';
-      }
-    }
-    
-    // 只在模式改变时更新类名，避免频繁重绘
-    if (element.dataset.dropMode !== newMode) {
-      element.classList.remove('drag-over', 'drag-before', 'drag-after');
-      element.dataset.dropMode = newMode;
-      
-      if (newMode === 'before') {
-        element.classList.add('drag-before');
-      } else if (newMode === 'after') {
-        element.classList.add('drag-after');
-      } else if (newMode === 'into') {
-        element.classList.add('drag-over');
-      }
-    }
-    
-    // 设置拖放效果
-    e.dataTransfer.dropEffect = canDrop ? 'move' : 'none';
-  });
-  
-  element.addEventListener('dragleave', (e) => {
-    // 只有当鼠标真正离开元素（而不是进入子元素）时才移除样式
-    // 使用 relatedTarget 判断鼠标去向
-    const relatedTarget = e.relatedTarget;
-    if (!relatedTarget || !element.contains(relatedTarget)) {
-      // 清除 dragover 标记
-      delete element.dataset.isDraggingOver;
-      
-      // 延迟移除样式，避免快速进出导致的闪烁
-      setTimeout(() => {
-        // 双重检查：如果在延迟期间又触发了 dragover，就不清除样式
-        if (!element.dataset.isDraggingOver) {
-          element.classList.remove('drag-over', 'drag-before', 'drag-after');
-          delete element.dataset.dropMode;
-        }
-      }, 20);
-    }
-  });
-  
-  element.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    element.classList.remove('drag-over', 'drag-before', 'drag-after');
-    
-    const dropMode = element.dataset.dropMode;
-    delete element.dataset.dropMode;
-    delete element.dataset.isDraggingOver;
-    
-    logger.debug(`Drop 事件触发, dropMode: ${dropMode}`);
-    
-    const bookmarkId = e.dataTransfer.getData('bookmarkId');
-    const draggedFolderId = e.dataTransfer.getData('folderId');
-    const isBatch = e.dataTransfer.getData('isBatch') === 'true';
-    const bookmarkIdsStr = e.dataTransfer.getData('bookmarkIds');
-    
-    let draggedIds = [];
-    if (isBatch && bookmarkIdsStr) {
-      // 批量拖动
-      try {
-        draggedIds = JSON.parse(bookmarkIdsStr);
-        logger.debug(`批量拖动 ${draggedIds.length} 个书签`);
-      } catch (error) {
-        logger.error('解析书签ID列表失败', error);
-        return;
-      }
-    } else {
-      // 单个拖动
-      const draggedId = bookmarkId || draggedFolderId;
-      if (!draggedId) {
-        logger.error(t('dragDataIncomplete'));
-        return;
-      }
-      draggedIds = [draggedId];
-    }
-    
-    const targetFolderId = element.dataset.folderId;
-    const targetBookmarkId = element.dataset.bookmarkId;
-    const targetId = targetFolderId || targetBookmarkId;
-    
-    // 防止将文件夹拖到自己里面或自己的位置
-    if (!isBatch && draggedFolderId && draggedFolderId === targetFolderId) {
-      logger.debug('不能将文件夹移动到自己里面');
-      return;
-    }
-    
-    try {
-      if (dropMode === 'into' && targetFolderId) {
-        // 移动到文件夹内
-        logger.debug(`尝试移动 ${draggedIds.length} 个项目到文件夹 ${targetFolderId}`);
-        
-        const movedItems = []; // 记录所有移动的项目信息
-        
-        for (const draggedId of draggedIds) {
-          // 获取拖动项的原信息用于记录
-          const [draggedItem] = await chrome.bookmarks.get(draggedId);
-          const oldParentId = draggedItem.parentId;
-          const oldIndex = draggedItem.index;
-          const isBookmark = draggedItem.url !== undefined;
-          
-          movedItems.push({
-            id: draggedId,
-            oldParentId: oldParentId,
-            oldIndex: oldIndex,
-            isBookmark: isBookmark
-          });
-          
-          await chrome.bookmarks.move(draggedId, { parentId: targetFolderId });
-        }
-        
-        // 记录操作历史（单个和批量都支持撤销）
-        if (isBatch) {
-          recordOperation({
-            type: 'batchMove',
-            itemType: 'bookmark',
-            data: {
-              items: movedItems,
-              newParentId: targetFolderId,
-              count: draggedIds.length
-            }
-          });
-          showToast(`已移动 ${draggedIds.length} 个书签`, 'success');
-          clearSelection(); // 清除选中状态
-        } else {
-          // 单个移动，记录操作历史
-          const movedItem = movedItems[0];
-          recordOperation({
-            type: 'move',
-            itemType: movedItem.isBookmark ? 'bookmark' : 'folder',
-            data: {
-              id: movedItem.id,
-              oldParentId: movedItem.oldParentId,
-              oldIndex: movedItem.oldIndex,
-              newParentId: targetFolderId
-            }
-          });
-          
-          const [item] = await chrome.bookmarks.get(draggedIds[0]);
-          const isBookmark = item.url !== undefined;
-          logger.info(isBookmark ? t('moveBookmarkSuccess') : '文件夹移动成功');
-          showToast(isBookmark ? t('bookmarkMoved') : t('folderMoved'), 'success');
-        }
-      } else if (dropMode === 'before' || dropMode === 'after') {
-        // 批量拖动不支持排序
-        if (isBatch) {
-          logger.debug('批量拖动不支持排序功能');
-          showToast('批量拖动请拖到文件夹上', 'warning');
-          return;
-        }
-        
-        const draggedId = draggedIds[0];
-        
-        // 排序：插入到目标位置
-        logger.debug(`排序模式: ${dropMode}, 目标ID: ${targetId}`);
-        
-        // 获取目标项的信息
-        const [targetItem] = await chrome.bookmarks.get(targetId);
-        if (!targetItem) {
-          logger.error('无法获取目标项信息');
-          return;
-        }
-        
-        logger.debug(`目标项: ${targetItem.title}, 父文件夹: ${targetItem.parentId}`);
-        
-        // 获取拖动项的信息
-        const [draggedItem] = await chrome.bookmarks.get(draggedId);
-        
-        // 检查是否试图将非顶级文件夹移动到顶级位置
-        // 顶级文件夹的 parentId 是 '0'
-        const isTargetTopLevel = targetItem.parentId === '0';
-        const isDraggedFolder = !draggedItem.url; // 是文件夹（没有url属性）
-        const isDraggedTopLevel = draggedItem.parentId === '0';
-        
-        if (isTargetTopLevel && isDraggedFolder && !isDraggedTopLevel) {
-          // 不允许将子文件夹移动到顶级位置
-          logger.warn('不允许将子文件夹移动到顶级文件夹位置');
-          await showAlert('Chrome 不支持将子文件夹移动到顶级位置', '无法移动');
-          return;
-        }
-        
-        // 获取父文件夹的所有子项
-        const [parentFolder] = await chrome.bookmarks.getSubTree(targetItem.parentId);
-        if (!parentFolder || !parentFolder.children) {
-          logger.error('无法获取父文件夹信息');
-          return;
-        }
-        
-        // 找到目标项的索引
-        let targetIndex = parentFolder.children.findIndex(item => item.id === targetId);
-        if (targetIndex === -1) {
-          logger.error('无法找到目标项的索引');
-          return;
-        }
-        
-        // 如果是插入到后面，索引+1
-        if (dropMode === 'after') {
-          targetIndex++;
-        }
-        
-        // 如果在同一父文件夹内移动，需要调整索引
-        if (draggedItem.parentId === targetItem.parentId) {
-          const currentIndex = parentFolder.children.findIndex(item => item.id === draggedId);
-          if (currentIndex < targetIndex) {
-            targetIndex--;
-          }
-        }
-        
-        logger.debug(`移动 ${draggedId} 到位置 ${targetIndex} (父文件夹: ${targetItem.parentId})`);
-        
-        // 获取原信息
-        const oldParentId = draggedItem.parentId;
-        const oldIndex = draggedItem.index;
-        
-        await chrome.bookmarks.move(draggedId, {
-          parentId: targetItem.parentId,
-          index: targetIndex
-        });
-        
-        // 记录操作历史
-        const isBookmark = draggedItem.url !== undefined;
-        recordOperation({
-          type: 'move',
-          itemType: isBookmark ? 'bookmark' : 'folder',
-          data: {
-            id: draggedId,
-            oldParentId: oldParentId,
-            oldIndex: oldIndex,
-            newParentId: targetItem.parentId,
-            newIndex: targetIndex
-          }
-        });
-        
-        logger.info('排序成功');
-        showToast(isBookmark ? t('bookmarkMoved') : t('folderMoved'), 'success');
-      }
-      
-      // 重新加载书签树并刷新显示
-      await loadBookmarks();
-      selectFolder(currentFolderId, false);
-      renderFolders();
-    } catch (error) {
-      logger.error(t('moveBookmarkError'), error);
-      await showAlert(t('moveBookmarkError'), t('error'));
-    }
-  });
-}
+// 注意：拖拽相关逻辑已整合到事件委托系统中：
+// - initSidebarDelegation(): 处理侧边栏元素的拖拽
+// - initBookmarksGridDelegation(): 处理书签网格元素的拖拽
+// - handleDrop(): 统一的拖放处理逻辑
 
 // ==================== 文件夹操作 ====================
 function openAddFolderModal() {
@@ -2750,14 +2651,59 @@ function showConfirm(message, title = '确认') {
   });
 }
 
-// 简单的输入提示框（使用原生 prompt）
+// 自定义输入对话框 - 替代原生 prompt
 function showPrompt(defaultValue = '', title = '请输入') {
   return new Promise((resolve) => {
-    // 使用 setTimeout 避免阻塞
+    const overlay = document.getElementById('promptDialog');
+    const titleEl = document.getElementById('promptTitle');
+    const inputEl = document.getElementById('promptInput');
+    const confirmBtn = document.getElementById('promptConfirmBtn');
+    const cancelBtn = document.getElementById('promptCancelBtn');
+    
+    titleEl.textContent = title;
+    inputEl.value = defaultValue;
+    confirmBtn.textContent = t('confirm') || '确定';
+    cancelBtn.textContent = t('cancel') || '取消';
+    
+    overlay.style.display = 'flex';
+    
+    // 聚焦输入框并选中文本
     setTimeout(() => {
-      const result = window.prompt(title, defaultValue);
-      resolve(result);
-    }, 0);
+      inputEl.focus();
+      inputEl.select();
+    }, 50);
+    
+    const handleConfirm = () => {
+      const value = inputEl.value;
+      cleanup();
+      resolve(value);
+    };
+    
+    const handleCancel = () => {
+      cleanup();
+      resolve(null);
+    };
+    
+    const handleKeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleConfirm();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+    
+    const cleanup = () => {
+      overlay.style.display = 'none';
+      confirmBtn.removeEventListener('click', handleConfirm);
+      cancelBtn.removeEventListener('click', handleCancel);
+      inputEl.removeEventListener('keydown', handleKeydown);
+    };
+    
+    confirmBtn.addEventListener('click', handleConfirm);
+    cancelBtn.addEventListener('click', handleCancel);
+    inputEl.addEventListener('keydown', handleKeydown);
   });
 }
 
@@ -2858,10 +2804,29 @@ async function performUndo() {
         
       case 'move':
         // 撤销移动 = 移回原位置
+        logger.debug(`撤销移动: id=${operation.data.id}, 目标位置 parentId=${operation.data.oldParentId}, index=${operation.data.oldIndex}`);
+        
+        // 获取当前位置
+        const [currentItem] = await chrome.bookmarks.get(operation.data.id);
+        let restoreIndex = operation.data.oldIndex;
+        
+        // 如果在同一文件夹内移动，需要调整索引
+        // Chrome API 在同一文件夹内移动时，如果目标 index > 当前 index，实际位置会少 1
+        if (currentItem.parentId === operation.data.oldParentId) {
+          const currentIndex = currentItem.index;
+          if (restoreIndex > currentIndex) {
+            restoreIndex++; // 补偿 Chrome API 的行为
+            logger.debug(`同文件夹内移动，调整撤销目标索引: ${operation.data.oldIndex} -> ${restoreIndex}`);
+          }
+        }
+        
         await chrome.bookmarks.move(operation.data.id, {
           parentId: operation.data.oldParentId,
-          index: operation.data.oldIndex
+          index: restoreIndex
         });
+        // 验证移动后的位置
+        const [undoneItem] = await chrome.bookmarks.get(operation.data.id);
+        logger.debug(`撤销后实际位置: index=${undoneItem.index}`);
         break;
         
       case 'batchMove':

@@ -244,6 +244,22 @@
     </div>
   </div>
 
+  <!-- 自定义输入对话框 -->
+  <div id="promptDialog" class="custom-dialog-overlay" style="display: none;">
+    <div class="custom-dialog">
+      <div class="custom-dialog-header">
+        <h3 id="promptTitle">请输入</h3>
+      </div>
+      <div class="custom-dialog-body">
+        <input type="text" id="promptInput" class="form-input" placeholder="" autocomplete="off">
+      </div>
+      <div class="custom-dialog-footer">
+        <button id="promptCancelBtn" class="btn btn-secondary">取消</button>
+        <button id="promptConfirmBtn" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 右键菜单 -->
   <div id="contextMenu" class="context-menu" style="display: none;">
     <div class="context-menu-item" data-action="createSubfolder">
