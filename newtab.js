@@ -596,6 +596,14 @@ const i18n = {
     undo: '撤销',
     undoSuccess: '已撤销',
     noUndoHistory: '没有可撤销的操作',
+    // 健康检查
+    healthCheck: '健康检查',
+    healthChecking: '检查中...',
+    healthCheckProgress: '检查中 ({current}/{total})',
+    healthCheckComplete: '检查完成',
+    healthCheckNoBookmarks: '当前文件夹没有书签',
+    unhealthyBookmarks: '发现 {count} 个无效书签',
+    allBookmarksHealthy: '所有书签均可访问',
   },
   'en-US': {
     title: 'Bookmark Manager',
@@ -696,6 +704,14 @@ const i18n = {
     undo: 'Undo',
     undoSuccess: 'Undone',
     noUndoHistory: 'No operation to undo',
+    // Health check
+    healthCheck: 'Health Check',
+    healthChecking: 'Checking...',
+    healthCheckProgress: 'Checking ({current}/{total})',
+    healthCheckComplete: 'Check Complete',
+    healthCheckNoBookmarks: 'No bookmarks in current folder',
+    unhealthyBookmarks: 'Found {count} broken bookmark(s)',
+    allBookmarksHealthy: 'All bookmarks are accessible',
   }
 };
 
@@ -865,6 +881,7 @@ async function clearFaviconCache() {
 
 // ==================== 应用初始化 ====================
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadUnhealthyBookmarkIds(); // 加载 404 书签状态
   await loadBookmarks();
   initTooltip(); // 初始化自定义 tooltip
   initContextMenu(); // 初始化右键菜单
@@ -980,6 +997,9 @@ function setupEventListeners() {
   
   // 添加书签
   document.getElementById('addBookmarkBtn').addEventListener('click', openAddBookmarkModal);
+  
+  // 健康检查
+  document.getElementById('healthCheckBtn').addEventListener('click', performHealthCheck);
   
   // 批量操作
   document.getElementById('selectAllBtn').addEventListener('click', selectAll);
@@ -1358,9 +1378,10 @@ function createFolderCard(folder) {
 function createBookmarkCard(bookmark) {
   // 使用本地默认图标作为占位符
   const placeholderIcon = 'default-favicon.svg';
+  const isUnhealthy = unhealthyBookmarkIds.has(bookmark.id);
   
   return `
-    <div class="bookmark-card" 
+    <div class="bookmark-card${isUnhealthy ? ' unhealthy' : ''}" 
          data-bookmark-id="${bookmark.id}" 
          data-url="${escapeHtml(bookmark.url)}"
          draggable="true">
@@ -1738,6 +1759,144 @@ function renderSearchResults(bookmarks) {
   // 使用懒加载处理 favicon
   setupLazyLoadFavicons();
   // 注意：事件绑定已移至 initBookmarksGridDelegation() 使用事件委托处理
+}
+
+// ==================== 健康检查功能 ====================
+let healthCheckInProgress = false;
+let unhealthyBookmarkIds = new Set(); // 存储无效书签ID
+
+// 从 storage 加载无效书签 ID
+async function loadUnhealthyBookmarkIds() {
+  try {
+    const result = await chrome.storage.local.get('unhealthyBookmarkIds');
+    if (result.unhealthyBookmarkIds && Array.isArray(result.unhealthyBookmarkIds)) {
+      unhealthyBookmarkIds = new Set(result.unhealthyBookmarkIds);
+    }
+  } catch (error) {
+    logger.error('加载无效书签ID失败:', error);
+  }
+}
+
+// 保存无效书签 ID 到 storage
+async function saveUnhealthyBookmarkIds() {
+  try {
+    await chrome.storage.local.set({ 
+      unhealthyBookmarkIds: Array.from(unhealthyBookmarkIds) 
+    });
+  } catch (error) {
+    logger.error('保存无效书签ID失败:', error);
+  }
+}
+
+/**
+ * 执行书签健康检查
+ */
+async function performHealthCheck() {
+  if (healthCheckInProgress) {
+    showToast(t('healthChecking'), 'info');
+    return;
+  }
+  
+  // 获取当前文件夹的书签
+  if (!currentFolderData || !currentFolderData.children) {
+    showToast(t('healthCheckNoBookmarks'), 'warning');
+    return;
+  }
+  
+  const bookmarks = currentFolderData.children.filter(item => item.url);
+  if (bookmarks.length === 0) {
+    showToast(t('healthCheckNoBookmarks'), 'warning');
+    return;
+  }
+  
+  healthCheckInProgress = true;
+  const btn = document.getElementById('healthCheckBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  
+  // 记录本次检查中通过的书签ID（用于清除之前的 404 标记）
+  const healthyInThisCheck = new Set();
+  
+  let checkedCount = 0;
+  let unhealthyCount = 0;
+  const total = bookmarks.length;
+  
+  // 更新按钮显示进度
+  const updateProgress = () => {
+    btn.innerHTML = `⏳ ${t('healthCheckProgress', { current: checkedCount, total })}`;
+  };
+  
+  updateProgress();
+  
+  // 并发检查，但限制并发数为5
+  const concurrencyLimit = 5;
+  const results = [];
+  
+  for (let i = 0; i < bookmarks.length; i += concurrencyLimit) {
+    const batch = bookmarks.slice(i, i + concurrencyLimit);
+    const batchPromises = batch.map(async (bookmark) => {
+      try {
+        const result = await chrome.runtime.sendMessage({
+          action: 'checkUrlHealth',
+          url: bookmark.url
+        });
+        checkedCount++;
+        updateProgress();
+        
+        // 只有 404/410（not-found）才标记为无效
+        // 连接失败可能是 VPN/内网，不标记
+        if (result && result.status === 'not-found') {
+          unhealthyCount++;
+          unhealthyBookmarkIds.add(bookmark.id);
+          // 标记卡片为无效
+          const card = document.querySelector(`.bookmark-card[data-bookmark-id="${bookmark.id}"]`);
+          if (card) {
+            card.classList.add('unhealthy');
+          }
+        } else if (result && result.status === 'healthy') {
+          // 本次检查通过，记录下来
+          healthyInThisCheck.add(bookmark.id);
+        }
+        return { bookmark, result };
+      } catch (error) {
+        checkedCount++;
+        updateProgress();
+        logger.error(`检查书签失败: ${bookmark.url}`, error);
+        return { bookmark, result: { status: 'error', error: error.message } };
+      }
+    });
+    
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+  }
+  
+  // 清除本次检查通过的书签的 404 标记
+  for (const id of healthyInThisCheck) {
+    if (unhealthyBookmarkIds.has(id)) {
+      unhealthyBookmarkIds.delete(id);
+      const card = document.querySelector(`.bookmark-card[data-bookmark-id="${id}"]`);
+      if (card) {
+        card.classList.remove('unhealthy');
+      }
+    }
+  }
+  
+  // 保存到 storage
+  await saveUnhealthyBookmarkIds();
+  
+  // 恢复按钮状态
+  btn.disabled = false;
+  btn.innerHTML = originalText;
+  healthCheckInProgress = false;
+  
+  // 显示结果
+  if (unhealthyCount > 0) {
+    showToast(t('unhealthyBookmarks', { count: unhealthyCount }), 'warning');
+  } else {
+    showToast(t('allBookmarksHealthy'), 'success');
+  }
+  
+  logger.info(`健康检查完成: ${total} 个书签, ${unhealthyCount} 个无效`);
 }
 
 // ==================== 多选功能 ====================

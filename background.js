@@ -417,8 +417,74 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse(result);
     });
     return true; // 异步响应
+  } else if (request.action === 'checkUrlHealth') {
+    // 检查 URL 健康度
+    const url = request.url;
+    checkUrlHealth(url).then(result => {
+      sendResponse(result);
+    }).catch(error => {
+      sendResponse({ url, status: 'error', error: error.message });
+    });
+    return true; // 异步响应
   }
 });
+
+/**
+ * 检查 URL 健康度
+ * @param {string} url - 要检查的 URL
+ * @returns {Promise<Object>} - { url, status, statusCode }
+ */
+async function checkUrlHealth(url) {
+  try {
+    // 使用 HEAD 请求检查 URL，减少数据传输
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+    
+    const response = await fetch(url, {
+      method: 'HEAD',
+      mode: 'no-cors', // 允许跨域请求
+      signal: controller.signal,
+      redirect: 'follow'
+    });
+    
+    clearTimeout(timeoutId);
+    
+    // no-cors 模式下，response.type 会是 'opaque'，无法获取状态码
+    // 但如果请求成功就说明 URL 可达，直接返回 healthy
+    // 不再尝试 cors 模式，因为企业内网/需要认证的站点可能返回错误状态码
+    if (response.type === 'opaque') {
+      return { url, status: 'healthy', statusCode: 0 };
+    }
+    
+    // 非 opaque 响应，检查状态码
+    // 只有 404/410 才标记为 not-found
+    if (response.status === 404 || response.status === 410) {
+      // 用 GET 再验证一次（某些网站不支持 HEAD）
+      try {
+        const getResponse = await fetch(url, {
+          method: 'GET',
+          mode: 'no-cors',
+          signal: AbortSignal.timeout(10000),
+          redirect: 'follow'
+        });
+        // no-cors GET 成功说明 URL 可达
+        if (getResponse.type === 'opaque') {
+          return { url, status: 'healthy', statusCode: 0 };
+        }
+        const isNotFound = getResponse.status === 404 || getResponse.status === 410;
+        return { url, status: isNotFound ? 'not-found' : 'healthy', statusCode: getResponse.status };
+      } catch (e) {
+        // GET 也失败，可能是网络问题，不标记
+        return { url, status: 'unreachable', statusCode: 0 };
+      }
+    }
+    
+    return { url, status: 'healthy', statusCode: response.status };
+  } catch (error) {
+    // 网络错误、超时等：可能是 VPN/内网，不标记为问题
+    return { url, status: 'unreachable', statusCode: 0, error: error.message };
+  }
+}
 
 // 安装时的初始化
 chrome.runtime.onInstalled.addListener(async (details) => {

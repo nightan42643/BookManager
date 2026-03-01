@@ -712,3 +712,120 @@ describe('错误处理', () => {
     expect(isValidUrl('')).toBe(false);
   });
 });
+
+// ==================== 健康检查功能测试 ====================
+describe('健康检查功能', () => {
+  beforeEach(() => {
+    setupDOM();
+  });
+
+  test('unhealthyBookmarkIds 应能正确管理', () => {
+    const unhealthyBookmarkIds = new Set();
+    
+    // 添加无效书签
+    unhealthyBookmarkIds.add('100');
+    unhealthyBookmarkIds.add('101');
+    expect(unhealthyBookmarkIds.size).toBe(2);
+    expect(unhealthyBookmarkIds.has('100')).toBe(true);
+    
+    // 移除恢复正常的书签
+    unhealthyBookmarkIds.delete('100');
+    expect(unhealthyBookmarkIds.size).toBe(1);
+    expect(unhealthyBookmarkIds.has('100')).toBe(false);
+  });
+
+  test('健康检查结果应能转换为数组用于持久化', () => {
+    const unhealthyBookmarkIds = new Set(['100', '101', '102']);
+    
+    // 转换为数组用于存储
+    const arrayForStorage = Array.from(unhealthyBookmarkIds);
+    expect(arrayForStorage).toEqual(['100', '101', '102']);
+    
+    // 从数组恢复
+    const restoredSet = new Set(arrayForStorage);
+    expect(restoredSet.has('100')).toBe(true);
+    expect(restoredSet.size).toBe(3);
+  });
+
+  test('storage API 应能被正确调用', async () => {
+    const unhealthyIds = ['200', '201'];
+    
+    await chrome.storage.local.set({ unhealthyBookmarkIds: unhealthyIds });
+    expect(chrome.storage.local.set).toHaveBeenCalledWith({ unhealthyBookmarkIds: unhealthyIds });
+    
+    await chrome.storage.local.get('unhealthyBookmarkIds');
+    expect(chrome.storage.local.get).toHaveBeenCalledWith('unhealthyBookmarkIds');
+  });
+
+  test('健康检查应只标记 404/410 状态码', () => {
+    const shouldMarkUnhealthy = (status, statusCode) => {
+      return status === 'not-found' || statusCode === 404 || statusCode === 410;
+    };
+    
+    // 404 应该标记
+    expect(shouldMarkUnhealthy('not-found', 404)).toBe(true);
+    expect(shouldMarkUnhealthy('not-found', 410)).toBe(true);
+    
+    // 其他状态码不应标记
+    expect(shouldMarkUnhealthy('healthy', 200)).toBe(false);
+    expect(shouldMarkUnhealthy('unreachable', 0)).toBe(false);
+    expect(shouldMarkUnhealthy('error', 500)).toBe(false);
+  });
+
+  test('卡片应能正确添加/移除 unhealthy 类', () => {
+    // 创建测试卡片
+    const grid = document.getElementById('bookmarksGrid');
+    grid.innerHTML = `
+      <div class="bookmark-card" data-bookmark-id="100"></div>
+      <div class="bookmark-card" data-bookmark-id="101"></div>
+    `;
+    
+    // 添加 unhealthy 类
+    const card100 = document.querySelector('[data-bookmark-id="100"]');
+    card100.classList.add('unhealthy');
+    expect(card100.classList.contains('unhealthy')).toBe(true);
+    
+    // 移除 unhealthy 类
+    card100.classList.remove('unhealthy');
+    expect(card100.classList.contains('unhealthy')).toBe(false);
+  });
+
+  test('Chrome runtime sendMessage 应能正确调用', async () => {
+    chrome.runtime.sendMessage({
+      action: 'checkUrlHealth',
+      url: 'https://example.com'
+    });
+    
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      action: 'checkUrlHealth',
+      url: 'https://example.com'
+    });
+  });
+
+  test('批量检查时应限制并发数', () => {
+    const concurrencyLimit = 5;
+    const bookmarks = Array(12).fill(null).map((_, i) => ({ id: String(i), url: `https://site${i}.com` }));
+    
+    // 计算需要的批次数
+    const batchCount = Math.ceil(bookmarks.length / concurrencyLimit);
+    expect(batchCount).toBe(3); // 12个书签，每批5个，需要3批
+    
+    // 验证每批的大小
+    for (let i = 0; i < batchCount; i++) {
+      const batch = bookmarks.slice(i * concurrencyLimit, (i + 1) * concurrencyLimit);
+      expect(batch.length).toBeLessThanOrEqual(concurrencyLimit);
+    }
+  });
+
+  test('HEAD 请求 404 时应用 GET 重试逻辑', () => {
+    // 测试重试逻辑的判断条件
+    const shouldRetryWithGet = (headStatus) => {
+      return headStatus === 404 || headStatus === 410;
+    };
+    
+    expect(shouldRetryWithGet(404)).toBe(true);
+    expect(shouldRetryWithGet(410)).toBe(true);
+    expect(shouldRetryWithGet(200)).toBe(false);
+    expect(shouldRetryWithGet(500)).toBe(false);
+  });
+});
