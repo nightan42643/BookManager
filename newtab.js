@@ -12,6 +12,9 @@ let currentDragInfo = null; // 记录当前拖拽项的信息（用于判断拖�
 let selectedBookmarks = new Set(); // 选中的书签ID集合
 let lastSelectedBookmark = null; // 最后选中的书签ID（用于Shift连续选择）
 
+// Favicon 懒加载 Observer（单例）
+let faviconObserver = null;
+
 // 撤销功能系统
 let undoHistory = []; // 操作历史栈，最多保存10条
 const MAX_UNDO_HISTORY = 10;
@@ -260,6 +263,15 @@ function initBookmarksGridDelegation() {
     }
   }, true);
   
+  // 书签右键菜单委托
+  bookmarksGrid.addEventListener('contextmenu', (e) => {
+    const bookmarkCard = e.target.closest('.bookmark-card');
+    if (bookmarkCard) {
+      e.preventDefault();
+      showBookmarkContextMenu(e.pageX, e.pageY, bookmarkCard.dataset.bookmarkId, bookmarkCard.dataset.url);
+    }
+  });
+  
   // 拖拽事件委托 - dragstart
   bookmarksGrid.addEventListener('dragstart', async (e) => {
     const card = e.target.closest('[draggable="true"]');
@@ -428,6 +440,26 @@ async function handleDrop(dataTransfer, targetId, dropMode, targetType) {
         });
       }
       showToast(isBatch ? `已移动 ${draggedIds.length} 个项目` : (draggedFolderId ? t('folderMoved') : t('bookmarkMoved')), 'success');
+      
+      // 从当前视图移除被拖走的元素（避免图标重新加载）
+      for (const draggedId of draggedIds) {
+        const selector = `.bookmark-card[data-bookmark-id="${draggedId}"], .folder-card[data-folder-id="${draggedId}"]`;
+        document.querySelector(selector)?.remove();
+      }
+      
+      // 更新内存数据和侧边栏
+      await loadBookmarks();
+      currentFolderData = getFolderById(currentFolderId);
+      renderFolders();
+      
+      // 检查是否需要显示空状态
+      const bookmarksGrid = document.getElementById('bookmarksGrid');
+      const emptyState = document.getElementById('emptyState');
+      if (bookmarksGrid.children.length === 0) {
+        emptyState.style.display = 'block';
+        emptyState.querySelector('h3').textContent = t('emptyFolder');
+        emptyState.querySelector('p').textContent = t('clickToAdd');
+      }
     }
     // 排序模式
     else if (dropMode === 'before' || dropMode === 'after') {
@@ -450,7 +482,11 @@ async function handleDrop(dataTransfer, targetId, dropMode, targetType) {
       let targetIndex = parentFolder.children.findIndex(item => item.id === targetId);
       
       if (dropMode === 'after') targetIndex++;
-      if (draggedItem.parentId === targetItem.parentId) {
+      
+      // 检查是否是同文件夹内排序
+      const isSameFolderSort = draggedItem.parentId === targetItem.parentId;
+      
+      if (isSameFolderSort) {
         const currentIndex = parentFolder.children.findIndex(item => item.id === draggedId);
         if (currentIndex < targetIndex) targetIndex--;
       }
@@ -482,15 +518,51 @@ async function handleDrop(dataTransfer, targetId, dropMode, targetType) {
       logger.debug(`记录撤销操作: oldIndex=${oldIndex}, newIndex=${movedItem.index}`);
       
       showToast(draggedItem.url ? t('bookmarkMoved') : t('folderMoved'), 'success');
+      
+      // 同文件夹内排序：使用 DOM 操作移动元素，避免图标重新加载
+      if (isSameFolderSort && currentFolderId === targetItem.parentId) {
+        reorderDOMElement(draggedId, targetId, dropMode, draggedItem.url ? 'bookmark' : 'folder');
+        // 更新内存中的数据结构
+        await loadBookmarks();
+        currentFolderData = getFolderById(currentFolderId);
+      } else {
+        // 跨文件夹移动需要完全刷新
+        await loadBookmarks();
+        selectFolder(currentFolderId, false);
+        renderFolders();
+      }
     }
-    
-    await loadBookmarks();
-    selectFolder(currentFolderId, false);
-    renderFolders();
   } catch (error) {
     logger.error(t('moveBookmarkError'), error);
     await showAlert(t('moveBookmarkError'), t('error'));
   }
+}
+
+/**
+ * 在 DOM 中重新排序元素（不触发图标重新加载）
+ */
+function reorderDOMElement(draggedId, targetId, dropMode, itemType) {
+  const bookmarksGrid = document.getElementById('bookmarksGrid');
+  const selector = itemType === 'bookmark' 
+    ? `.bookmark-card[data-bookmark-id="${draggedId}"]`
+    : `.folder-card[data-folder-id="${draggedId}"]`;
+  const targetSelector = `.bookmark-card[data-bookmark-id="${targetId}"], .folder-card[data-folder-id="${targetId}"]`;
+  
+  const draggedElement = bookmarksGrid.querySelector(selector);
+  const targetElement = bookmarksGrid.querySelector(targetSelector);
+  
+  if (!draggedElement || !targetElement) {
+    logger.warn('DOM 重排：找不到元素', { draggedId, targetId });
+    return;
+  }
+  
+  if (dropMode === 'before') {
+    targetElement.parentNode.insertBefore(draggedElement, targetElement);
+  } else {
+    targetElement.parentNode.insertBefore(draggedElement, targetElement.nextSibling);
+  }
+  
+  logger.debug(`DOM 重排完成: ${draggedId} ${dropMode} ${targetId}`);
 }
 
 // ==================== 多语言系统 ====================
@@ -582,6 +654,12 @@ const i18n = {
     topLevelFolders: '顶级文件夹',
     currentFolderSubfolders: '当前文件夹的子文件夹',
     dragDataIncomplete: '拖拽数据不完整',
+    // 书签右键菜单
+    openInNewTab: '在新标签页打开',
+    copyUrl: '复制链接',
+    urlCopied: '链接已复制',
+    editBookmark: '编辑书签',
+    deleteBookmark: '删除书签',
     // Toast 提示文本
     bookmarkAdded: '书签已添加',
     bookmarkUpdated: '书签已更新',
@@ -690,6 +768,12 @@ const i18n = {
     topLevelFolders: 'Top Level Folders',
     currentFolderSubfolders: 'Subfolders of Current Folder',
     dragDataIncomplete: 'Drag data incomplete',
+    // Bookmark context menu
+    openInNewTab: 'Open in New Tab',
+    copyUrl: 'Copy URL',
+    urlCopied: 'URL copied',
+    editBookmark: 'Edit Bookmark',
+    deleteBookmark: 'Delete Bookmark',
     // Toast messages
     bookmarkAdded: 'Bookmark added',
     bookmarkUpdated: 'Bookmark updated',
@@ -884,7 +968,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadUnhealthyBookmarkIds(); // 加载 404 书签状态
   await loadBookmarks();
   initTooltip(); // 初始化自定义 tooltip
-  initContextMenu(); // 初始化右键菜单
+  initContextMenu(); // 初始化文件夹右键菜单
+  initBookmarkContextMenu(); // 初始化书签右键菜单
   initSidebarResize(); // 初始化侧边栏宽度调整
   updateUndoButtonState(); // 初始化撤销按钮状态
   updateTime();
@@ -1404,23 +1489,6 @@ function createBookmarkCard(bookmark) {
   `;
 }
 
-function getFavicon(url) {
-  try {
-    const urlObj = new URL(url);
-    const hostname = urlObj.hostname;
-    
-    // 如果该域名已经失败过，直接返回默认图标
-    if (failedFaviconHosts.has(hostname)) {
-      return 'default-favicon.svg';
-    }
-    
-    // 返回网站自己的 favicon.ico 作为初始值
-    return `${urlObj.origin}/favicon.ico`;
-  } catch {
-    return 'default-favicon.svg';
-  }
-}
-
 // 懒加载：只加载可视区域书签的 favicon
 // 懒加载辅助函数：更新单个 favicon 图片
 function updateFaviconImage(img, faviconUrl) {
@@ -1474,10 +1542,16 @@ async function loadCachedFavicons(urls) {
 async function fetchAndUpdateUncachedFavicons(urls, hostnameToUrls) {
   // 收集没有缓存的 URL
   const uncachedUrls = [];
+  const uncachedHostnames = new Set();
   for (const url of urls) {
     const img = document.querySelector(`img[data-bookmark-url="${CSS.escape(url)}"]`);
     if (img && img.src.includes('default-favicon.svg')) {
       uncachedUrls.push(url);
+      try {
+        uncachedHostnames.add(new URL(url).hostname);
+      } catch (e) {
+        // 忽略无效 URL
+      }
     }
   }
   
@@ -1486,9 +1560,12 @@ async function fetchAndUpdateUncachedFavicons(urls, hostnameToUrls) {
     logger.debug(`发现 ${uncachedUrls.length} 个未缓存的书签，请求获取 favicon`);
     await fetchVisibleFavicons(uncachedUrls);
     
-    // 获取完成后更新显示
+    // 获取完成后更新显示（只更新之前未缓存的）
     setTimeout(async () => {
       for (const [hostname, urlList] of hostnameToUrls) {
+        // 只处理之前未缓存的 hostname
+        if (!uncachedHostnames.has(hostname)) continue;
+        
         const cachedFavicon = await getCachedFavicon(urlList[0]);
         if (cachedFavicon) {
           // 获取成功，从失败列表中移除
@@ -1521,6 +1598,12 @@ function setupLazyLoadFavicons() {
     return;
   }
   
+  // 清理旧的 Observer（避免内存泄漏）
+  if (faviconObserver) {
+    faviconObserver.disconnect();
+    faviconObserver = null;
+  }
+  
   logger.debug(`设置懒加载：监听 ${bookmarkImages.length} 个书签图标`);
   
   // 用于批量请求的 URL 队列
@@ -1545,8 +1628,8 @@ function setupLazyLoadFavicons() {
     await fetchAndUpdateUncachedFavicons(urls, hostnameToUrls);
   };
   
-  // 创建 Intersection Observer
-  const observer = new IntersectionObserver((entries) => {
+  // 创建新的 Intersection Observer
+  faviconObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (entry.isIntersecting) {
         const img = entry.target;
@@ -1564,7 +1647,7 @@ function setupLazyLoadFavicons() {
         }
         
         // 停止观察已加载的图标
-        observer.unobserve(img);
+        faviconObserver.unobserve(img);
       }
     });
   }, {
@@ -1575,7 +1658,7 @@ function setupLazyLoadFavicons() {
   
   // 观察所有书签图标
   bookmarkImages.forEach(img => {
-    observer.observe(img);
+    faviconObserver.observe(img);
   });
 }
 
@@ -1621,16 +1704,36 @@ function triggerFaviconScan() {
       }
       if (response && response.success) {
         logger.info(`Background scan completed: updated ${response.count} favicons from open tabs`);
-        // Wait a bit after scan completes before refreshing display
-        setTimeout(() => {
-          if (currentFolderId) {
-            logger.debug('Refreshing bookmark display to load latest favicons');
-            renderContent();
-          }
-        }, 500);
+        // 扫描完成后，只更新当前显示的图标，不重新渲染整个页面
+        if (response.count > 0) {
+          setTimeout(() => {
+            refreshDisplayedFavicons();
+          }, 100);
+        }
       }
     }
   );
+}
+
+// 刷新当前显示的书签图标（不重新渲染页面）
+async function refreshDisplayedFavicons() {
+  const bookmarkImages = document.querySelectorAll('.bookmark-card-icon[data-bookmark-url]');
+  if (bookmarkImages.length === 0) return;
+  
+  logger.debug(`刷新 ${bookmarkImages.length} 个已显示的书签图标`);
+  
+  for (const img of bookmarkImages) {
+    const url = img.dataset.bookmarkUrl;
+    if (!url) continue;
+    
+    // 只更新还是默认图标的
+    if (img.src.includes('default-favicon.svg')) {
+      const cachedFavicon = await getCachedFavicon(url);
+      if (cachedFavicon) {
+        updateFaviconImage(img, cachedFavicon);
+      }
+    }
+  }
 }
 
 // 按需获取当前显示的书签的 favicon
@@ -2401,6 +2504,9 @@ function initContextMenu() {
 }
 
 function showContextMenu(x, y, folderId) {
+  // 先隐藏书签的右键菜单
+  hideBookmarkContextMenu();
+  
   const contextMenu = document.getElementById('contextMenu');
   contextMenuTargetId = folderId;
   
@@ -2459,6 +2565,91 @@ async function handleContextMenuAction(action, folderId) {
       break;
     case 'rename':
       await renameFolder(folderId);
+      break;
+  }
+}
+
+// ==================== 书签右键菜单 ====================
+let bookmarkContextMenuTargetId = null;
+let bookmarkContextMenuTargetUrl = null;
+
+function initBookmarkContextMenu() {
+  const bookmarkContextMenu = document.getElementById('bookmarkContextMenu');
+  if (!bookmarkContextMenu) return;
+  
+  // 点击其他地方关闭菜单
+  document.addEventListener('click', () => {
+    hideBookmarkContextMenu();
+  });
+  
+  // 阻止菜单自身的点击事件冒泡
+  bookmarkContextMenu.addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+  
+  // 绑定菜单项点击事件
+  bookmarkContextMenu.querySelectorAll('.context-menu-item').forEach(item => {
+    item.addEventListener('click', async () => {
+      const action = item.dataset.action;
+      if (bookmarkContextMenuTargetId) {
+        await handleBookmarkContextMenuAction(action, bookmarkContextMenuTargetId, bookmarkContextMenuTargetUrl);
+      }
+      hideBookmarkContextMenu();
+    });
+  });
+}
+
+function showBookmarkContextMenu(x, y, bookmarkId, url) {
+  // 先隐藏文件夹的右键菜单
+  hideContextMenu();
+  
+  const bookmarkContextMenu = document.getElementById('bookmarkContextMenu');
+  bookmarkContextMenuTargetId = bookmarkId;
+  bookmarkContextMenuTargetUrl = url;
+  
+  // 更新位置
+  bookmarkContextMenu.style.left = x + 'px';
+  bookmarkContextMenu.style.top = y + 'px';
+  bookmarkContextMenu.style.display = 'block';
+  
+  // 确保菜单不超出屏幕
+  const menuRect = bookmarkContextMenu.getBoundingClientRect();
+  if (menuRect.right > window.innerWidth) {
+    bookmarkContextMenu.style.left = (window.innerWidth - menuRect.width - 10) + 'px';
+  }
+  if (menuRect.bottom > window.innerHeight) {
+    bookmarkContextMenu.style.top = (window.innerHeight - menuRect.height - 10) + 'px';
+  }
+}
+
+function hideBookmarkContextMenu() {
+  const bookmarkContextMenu = document.getElementById('bookmarkContextMenu');
+  if (bookmarkContextMenu) {
+    bookmarkContextMenu.style.display = 'none';
+  }
+  bookmarkContextMenuTargetId = null;
+  bookmarkContextMenuTargetUrl = null;
+}
+
+async function handleBookmarkContextMenuAction(action, bookmarkId, url) {
+  switch (action) {
+    case 'openNewTab':
+      window.open(url, '_blank');
+      break;
+    case 'copyUrl':
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast(t('urlCopied'), 'success');
+      } catch (error) {
+        logger.error('复制链接失败:', error);
+        showToast(t('error'), 'error');
+      }
+      break;
+    case 'editBookmark':
+      openEditBookmarkModal(bookmarkId);
+      break;
+    case 'deleteBookmark':
+      await deleteBookmark(bookmarkId);
       break;
   }
 }
@@ -3097,12 +3288,6 @@ function debounce(func, wait) {
     clearTimeout(timeout);
     timeout = setTimeout(later, wait);
   };
-}
-
-// 提取的错误处理函数
-function handleStorageError(operation, error) {
-  logger.error(`${operation} 失败:`, error);
-  showAlert(t(`${operation}Error`) || `${operation}失败，请重试`);
 }
 
 function escapeHtml(text) {
